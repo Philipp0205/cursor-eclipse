@@ -1,6 +1,6 @@
 target/
 bin/
-lib/*.jar
+**/lib/*.jar
 .classpath
 .project
 .settings/
