@@ -1,0 +1,12 @@
+target/
+bin/
+lib/*.jar
+.classpath
+.project
+.settings/
+.idea/
+*.iml
+.DS_Store
+*.class
+.polyglot.*
+.tycho-consumer-pom.xml

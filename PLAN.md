@@ -1,17 +1,17 @@
 # Plan: Cursor for Eclipse
 
-This repo will ship an Eclipse plugin that runs Cursor’s agent inside the IDE, the same way an OpenCode Eclipse plugin would run `opencode acp`.
+This repo ships an Eclipse plugin that runs Cursor’s agent inside the IDE over ACP (`agent acp`). It does **not** depend on an OpenCode Eclipse plugin.
 
-**Status:** plan only. No plugin code until this plan is agreed.
+**Status:** Phase 1 in progress (Tycho plugin + ACP hello-world chat).
 
-`https://github.com/Philipp0205/eclipse-opencode` is not publicly cloneable from this environment (404 / not found). The plan therefore uses:
+Decisions that are locked:
 
-- OpenCode’s documented ACP integration (`opencode acp` over stdio JSON-RPC)
-- Cursor CLI ACP (`agent acp`) and Cursor-specific extension methods
-- Eclipse Agents (`eclipse-agents/eclipse-agents` and `Philipp0205/eclipse-agents`) as the Eclipse-side ACP client / Tycho layout reference
-- GitHub Copilot for Eclipse only as a *non-goal* for v1 (it is a full proprietary-style plugin, not an ACP client)
-
-If `eclipse-opencode` can be made readable, the first implementation step is to copy its module layout, chat view, and process lifecycle and swap the agent binary.
+- Transport: ACP via Cursor CLI
+- Standalone plugin (not `org.eclipse.agents`)
+- SWT chat
+- Completions out of v1
+- Workspace writes through `IFile` (Phase 2)
+- Permission prompts by default
 
 ---
 
@@ -121,11 +121,9 @@ Java 21, Eclipse 2025-09+ (same ballpark as Copilot for Eclipse / eclipse-agents
 
 ## Implementation phases
 
-### Phase 0 — Align with eclipse-opencode (blocked until repo is readable)
+### Phase 0 — skipped
 
-- Diff module names, chat widget (SWT vs Browser), process manager
-- Reuse package structure and UX copy where it fits Cursor
-- List OpenCode-specific pieces to *not* copy (OpenCode config, provider keys, `opencode.json`)
+No OpenCode plugin. Cursor CLI is the only agent backend.
 
 ### Phase 1 — Skeleton that installs and talks ACP
 
