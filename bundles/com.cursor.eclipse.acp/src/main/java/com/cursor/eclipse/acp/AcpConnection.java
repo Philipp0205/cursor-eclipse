@@ -75,8 +75,8 @@ public final class AcpConnection implements Closeable {
 		clientInfo.addProperty("version", "0.1.0");
 		params.add("clientInfo", clientInfo);
 		JsonObject fs = new JsonObject();
-		fs.addProperty("readTextFile", false);
-		fs.addProperty("writeTextFile", false);
+		fs.addProperty("readTextFile", true);
+		fs.addProperty("writeTextFile", true);
 		JsonObject capabilities = new JsonObject();
 		capabilities.add("fs", fs);
 		capabilities.addProperty("terminal", false);
@@ -91,30 +91,46 @@ public final class AcpConnection implements Closeable {
 		return result == null || result.isJsonNull() ? new JsonObject() : result.getAsJsonObject();
 	}
 
-	public String newSession(String cwd) {
+	public JsonObject newSession(String cwd) {
 		JsonObject params = new JsonObject();
 		params.addProperty("cwd", cwd);
 		params.add("mcpServers", new JsonArray());
 		JsonObject result = request("session/new", params).getAsJsonObject();
 		String id = result.get("sessionId").getAsString();
 		sessionId.set(id);
-		return id;
+		return result;
 	}
 
 	public JsonObject prompt(String text) {
+		JsonArray prompt = new JsonArray();
+		JsonObject block = new JsonObject();
+		block.addProperty("type", "text");
+		block.addProperty("text", text);
+		prompt.add(block);
+		return prompt(prompt);
+	}
+
+	public JsonObject prompt(JsonArray prompt) {
 		String id = sessionId.get();
 		if (id == null) {
 			throw new AcpException("No ACP session. Call newSession first.");
 		}
 		JsonObject params = new JsonObject();
 		params.addProperty("sessionId", id);
-		JsonArray prompt = new JsonArray();
-		JsonObject block = new JsonObject();
-		block.addProperty("type", "text");
-		block.addProperty("text", text);
-		prompt.add(block);
 		params.add("prompt", prompt);
 		JsonElement result = request("session/prompt", params, 10, TimeUnit.MINUTES);
+		return result == null || result.isJsonNull() ? new JsonObject() : result.getAsJsonObject();
+	}
+
+	public JsonObject setMode(String modeId) {
+		String id = sessionId.get();
+		if (id == null) {
+			throw new AcpException("No ACP session. Call newSession first.");
+		}
+		JsonObject params = new JsonObject();
+		params.addProperty("sessionId", id);
+		params.addProperty("modeId", modeId);
+		JsonElement result = request("session/set_mode", params);
 		return result == null || result.isJsonNull() ? new JsonObject() : result.getAsJsonObject();
 	}
 
@@ -242,6 +258,10 @@ public final class AcpConnection implements Closeable {
 			JsonObject result;
 			if ("session/request_permission".equals(method)) {
 				result = listener.onRequestPermission(params);
+			} else if ("fs/read_text_file".equals(method)) {
+				result = listener.onReadTextFile(params);
+			} else if ("fs/write_text_file".equals(method)) {
+				result = listener.onWriteTextFile(params);
 			} else if (method.startsWith("cursor/")) {
 				result = listener.onCursorRequest(method, params);
 			} else {
@@ -275,6 +295,8 @@ public final class AcpConnection implements Closeable {
 				: new JsonObject();
 		if ("session/update".equals(method)) {
 			listener.onSessionUpdate(params);
+		} else {
+			listener.onNotification(method, params);
 		}
 	}
 
@@ -366,6 +388,16 @@ public final class AcpConnection implements Closeable {
 		}
 
 		@Override
+		public JsonObject onReadTextFile(JsonObject params) {
+			return delegate.onReadTextFile(params);
+		}
+
+		@Override
+		public JsonObject onWriteTextFile(JsonObject params) {
+			return delegate.onWriteTextFile(params);
+		}
+
+		@Override
 		public JsonObject onCursorRequest(String method, JsonObject params) {
 			return delegate.onCursorRequest(method, params);
 		}
@@ -378,6 +410,11 @@ public final class AcpConnection implements Closeable {
 		@Override
 		public void onTransportError(Throwable error) {
 			delegate.onTransportError(error);
+		}
+
+		@Override
+		public void onNotification(String method, JsonObject params) {
+			delegate.onNotification(method, params);
 		}
 
 		private static void drain(InputStream stream) {

@@ -22,6 +22,7 @@ public final class FakeAcpAgent implements Runnable {
 	private final BufferedReader reader;
 	private final BufferedWriter writer;
 	private volatile boolean permissionRequested;
+	private volatile String mode;
 
 	public FakeAcpAgent(InputStream in, OutputStream out) {
 		this.reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
@@ -72,12 +73,26 @@ public final class FakeAcpAgent implements Runnable {
 		if ("session/new".equals(method)) {
 			JsonObject result = new JsonObject();
 			result.addProperty("sessionId", "sess-1");
+			JsonObject modes = new JsonObject();
+			modes.addProperty("currentModeId", "agent");
+			JsonArray available = new JsonArray();
+			available.add(mode("agent", "Agent"));
+			available.add(mode("plan", "Plan"));
+			modes.add("availableModes", available);
+			result.add("modes", modes);
 			reply(message, result);
+			return;
+		}
+		if ("session/set_mode".equals(method)) {
+			mode = message.getAsJsonObject("params").get("modeId").getAsString();
+			reply(message, new JsonObject());
 			return;
 		}
 		if ("session/prompt".equals(method)) {
 			notifyUpdate(agentChunk("Hello from "));
 			notifyUpdate(agentChunk("ACP."));
+			requestFileRead();
+			requestFileWrite();
 			JsonObject perm = new JsonObject();
 			perm.addProperty("jsonrpc", "2.0");
 			perm.addProperty("id", "perm-1");
@@ -91,6 +106,37 @@ public final class FakeAcpAgent implements Runnable {
 			result.addProperty("stopReason", "end_turn");
 			reply(message, result);
 		}
+	}
+
+	private JsonObject mode(String id, String name) {
+		JsonObject value = new JsonObject();
+		value.addProperty("id", id);
+		value.addProperty("name", name);
+		return value;
+	}
+
+	private void requestFileRead() throws IOException {
+		JsonObject params = new JsonObject();
+		params.addProperty("sessionId", "sess-1");
+		params.addProperty("path", "/tmp/project/read.txt");
+		request("fs-read-1", "fs/read_text_file", params);
+	}
+
+	private void requestFileWrite() throws IOException {
+		JsonObject params = new JsonObject();
+		params.addProperty("sessionId", "sess-1");
+		params.addProperty("path", "/tmp/project/write.txt");
+		params.addProperty("content", "updated");
+		request("fs-write-1", "fs/write_text_file", params);
+	}
+
+	private void request(String id, String method, JsonObject params) throws IOException {
+		JsonObject request = new JsonObject();
+		request.addProperty("jsonrpc", "2.0");
+		request.addProperty("id", id);
+		request.addProperty("method", method);
+		request.add("params", params);
+		send(request);
 	}
 
 	private JsonObject agentChunk(String text) {

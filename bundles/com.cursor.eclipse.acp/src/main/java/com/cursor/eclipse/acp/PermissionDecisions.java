@@ -26,4 +26,12 @@ public final class PermissionDecisions {
 	public static JsonObject rejectOnce() {
 		return selected("reject-once");
 	}
+
+	public static JsonObject cancelled() {
+		JsonObject cancelled = new JsonObject();
+		cancelled.addProperty("outcome", "cancelled");
+		JsonObject result = new JsonObject();
+		result.add("outcome", cancelled);
+		return result;
+	}
 }

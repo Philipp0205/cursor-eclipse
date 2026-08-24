@@ -43,6 +43,38 @@ public final class SessionUpdates {
 		return null;
 	}
 
+	public static String kind(JsonObject params) {
+		JsonObject update = updateObject(params);
+		return update == null ? null : text(update, "sessionUpdate");
+	}
+
+	public static String toolSummary(JsonObject params) {
+		JsonObject update = updateObject(params);
+		if (update == null) {
+			return null;
+		}
+		String kind = text(update, "sessionUpdate");
+		if (!"tool_call".equals(kind) && !"tool_call_update".equals(kind)) {
+			return null;
+		}
+		String title = text(update, "title");
+		String status = text(update, "status");
+		String toolCallId = text(update, "toolCallId");
+		String label = title != null ? title : toolCallId;
+		if (label == null) {
+			label = "Tool";
+		}
+		return status == null ? label : label + " · " + status;
+	}
+
+	public static String currentMode(JsonObject params) {
+		JsonObject update = updateObject(params);
+		if (update == null || !"current_mode_update".equals(text(update, "sessionUpdate"))) {
+			return null;
+		}
+		return text(update, "modeId");
+	}
+
 	private static String text(JsonObject object, String key) {
 		JsonElement value = object.get(key);
 		if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) {

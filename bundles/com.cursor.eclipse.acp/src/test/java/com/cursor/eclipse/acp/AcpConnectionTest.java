@@ -30,6 +30,7 @@ class AcpConnectionTest {
 
 		CopyOnWriteArrayList<String> chunks = new CopyOnWriteArrayList<>();
 		CountDownLatch permission = new CountDownLatch(1);
+		CountDownLatch fileRequests = new CountDownLatch(2);
 		AtomicInteger permissions = new AtomicInteger();
 
 		AcpClientListener listener = new AcpClientListener() {
@@ -47,17 +48,37 @@ class AcpConnectionTest {
 				permission.countDown();
 				return PermissionDecisions.allowOnce();
 			}
+
+			@Override
+			public JsonObject onReadTextFile(JsonObject params) {
+				assertEquals("/tmp/project/read.txt", params.get("path").getAsString());
+				fileRequests.countDown();
+				JsonObject result = new JsonObject();
+				result.addProperty("content", "original");
+				return result;
+			}
+
+			@Override
+			public JsonObject onWriteTextFile(JsonObject params) {
+				assertEquals("updated", params.get("content").getAsString());
+				fileRequests.countDown();
+				return new JsonObject();
+			}
 		};
 
 		try (AcpConnection connection = new AcpConnection(clientIn, clientToAgent, listener)) {
 			JsonObject init = connection.initialize();
 			assertEquals(1, init.get("protocolVersion").getAsInt());
 			connection.authenticate("cursor_login");
-			assertEquals("sess-1", connection.newSession("/tmp/project"));
+			JsonObject newSession = connection.newSession("/tmp/project");
+			assertEquals("sess-1", newSession.get("sessionId").getAsString());
+			assertEquals(2, newSession.getAsJsonObject("modes").getAsJsonArray("availableModes").size());
+			connection.setMode("plan");
 			JsonObject prompt = connection.prompt("Say hello");
 			assertEquals("end_turn", prompt.get("stopReason").getAsString());
 			assertTrue(permission.await(5, TimeUnit.SECONDS));
 			assertEquals(1, permissions.get());
+			assertTrue(fileRequests.await(5, TimeUnit.SECONDS));
 			assertEquals("Hello from ACP.", String.join("", chunks));
 		}
 	}
