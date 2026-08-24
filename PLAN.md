@@ -2,7 +2,8 @@
 
 This repo ships an Eclipse plugin that runs Cursor’s agent inside the IDE over ACP (`agent acp`). It does **not** depend on an OpenCode Eclipse plugin.
 
-**Status:** Phase 1 in progress (Tycho plugin + ACP hello-world chat).
+**Status:** Phases 1–4 implemented. The next work is release validation in a
+desktop Eclipse installation and follow-up UX refinement.
 
 Decisions that are locked:
 
@@ -127,6 +128,8 @@ No OpenCode plugin. Cursor CLI is the only agent backend.
 
 ### Phase 1 — Skeleton that installs and talks ACP
 
+**Implemented.**
+
 1. Tycho parent + empty plugin/feature/update site that builds
 2. Preference page: path to `agent`, Test Connection
 3. Spawn `agent acp`, log stderr to Eclipse Error Log / trace
@@ -136,6 +139,8 @@ No OpenCode plugin. Cursor CLI is the only agent backend.
 **Exit criterion:** from a running Eclipse with the plugin, send “Say hello” and see the streamed reply. No file tools required yet.
 
 ### Phase 2 — Real agent loop
+
+**Implemented.**
 
 1. Handle `session/request_permission` (do not auto-allow by default)
 2. Advertise client fs capabilities; implement `fs/readTextFile` / `fs/writeTextFile` on workspace files
@@ -148,6 +153,8 @@ No OpenCode plugin. Cursor CLI is the only agent backend.
 
 ### Phase 3 — Cursor-specific UX
 
+**Implemented.**
+
 1. Blocking: `cursor/ask_question`, `cursor/create_plan`
 2. Notifications: `cursor/update_todos` (side drawer), `cursor/task`
 3. Attach resources: selection, open editors, problems markers as prompt content blocks
@@ -156,6 +163,9 @@ No OpenCode plugin. Cursor CLI is the only agent backend.
 **Exit criterion:** Plan mode shows an approve/reject plan dialog; todos update in the view.
 
 ### Phase 4 — Polish and distribution
+
+**Implemented:** fake-agent protocol tests, Tycho verification, p2 packaging,
+README instructions, CI, and a tag-triggered GitHub Pages publishing workflow.
 
 1. Headless tests for JSON-RPC framing and permission mapping (no Eclipse UI)
 2. Plugin tests with a fake ACP server process
