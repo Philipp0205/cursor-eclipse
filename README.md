@@ -18,7 +18,7 @@ Phase 1: connect to `agent acp`, stream a chat reply, prompt for tool permission
 
 ## Prerequisites
 
-- Eclipse 2025-09 (4.37) or later, Java 17+
+- Eclipse 2025-09 (4.37) or later, Java 21
 - [Cursor CLI](https://cursor.com/docs/cli/using) on `PATH` (or `~/.local/bin/agent`)
 - `agent login` (or an API key in Preferences → Cursor)
 

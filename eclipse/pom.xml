@@ -14,6 +14,7 @@
 	<name>Cursor Eclipse Tycho build</name>
 
 	<modules>
+		<module>cursor-eclipse-target</module>
 		<module>../bundles/com.cursor.eclipse</module>
 		<module>../features/com.cursor.eclipse.feature</module>
 		<module>../releng/com.cursor.eclipse.repository</module>
@@ -37,8 +38,13 @@
 				<version>${tycho.version}</version>
 				<configuration>
 					<target>
-						<file>${session.executionRootDirectory}/eclipse/cursor-eclipse.target</file>
+						<artifact>
+							<groupId>com.cursor.eclipse</groupId>
+							<artifactId>cursor-eclipse-target</artifactId>
+							<version>${project.version}</version>
+						</artifact>
 					</target>
+					<executionEnvironment>JavaSE-21</executionEnvironment>
 					<environments>
 						<environment>
 							<os>linux</os>
