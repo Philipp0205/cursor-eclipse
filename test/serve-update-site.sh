@@ -16,6 +16,7 @@ echo "Building ..."
 rm -rf "$ROOT/p2"
 mkdir "$ROOT/p2"
 cp -a "$ROOT/releng/com.cursor.eclipse.repository/target/merged-site/." "$ROOT/p2/"
+cp "$ROOT/releng/p2-index.html" "$ROOT/p2/index.html"
 
 cat <<EOF
 

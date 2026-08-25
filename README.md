@@ -115,9 +115,9 @@ install from the folder.
 
 ## Publishing
 
-GitHub Pages serves this repository's default branch, so the update site is the
-committed `p2/` directory rather than a Pages artifact. Enable it once under
-**Settings → Pages → Deploy from a branch → `main` / root**.
+GitHub Pages serves this repository's default branch from the root, so the
+update site is the committed `p2/` directory rather than a Pages artifact. No
+Pages setting needs changing; the site appears as soon as `p2/` reaches `main`.
 
 `.github/workflows/p2-site.yml` builds and verifies every push and pull request,
 including a p2 director run that proves the feature actually resolves against a

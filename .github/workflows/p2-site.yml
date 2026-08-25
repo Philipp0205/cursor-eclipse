@@ -114,6 +114,9 @@ jobs:
           rm -rf p2
           mkdir p2
           cp -a releng/com.cursor.eclipse.repository/target/merged-site/. p2/
+          # Pages has no directory listing, so without this the update site URL
+          # answers 404 in a browser even though Eclipse resolves it fine.
+          cp releng/p2-index.html p2/index.html
 
       - name: Commit the published update site
         run: |
