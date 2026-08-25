@@ -3,5 +3,9 @@
 	<feature id="com.cursor.eclipse.feature" version="0.0.0">
 		<category name="cursor"/>
 	</feature>
-	<category-def name="cursor" label="Cursor"/>
+	<category-def name="cursor" label="Cursor">
+		<description>
+			Run the Cursor agent inside Eclipse over the Agent Client Protocol.
+		</description>
+	</category-def>
 </site>

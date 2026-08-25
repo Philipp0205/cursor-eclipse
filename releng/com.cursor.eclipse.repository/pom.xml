@@ -11,4 +11,6 @@
 	</parent>
 	<artifactId>com.cursor.eclipse.repository</artifactId>
 	<packaging>eclipse-repository</packaging>
+	<!-- Tycho uses the project name as the p2 repository name shown in Eclipse. -->
+	<name>Cursor for Eclipse</name>
 </project>

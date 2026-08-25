@@ -83,8 +83,44 @@ Point **Window → Preferences → Cursor → Agent binary** at that file with
 arguments `acp`, then send `Run the integration demo`. Sending a prompt
 containing `slow` streams until you press **Stop**.
 
-## Distribution
+## Install
 
-`mvn verify` creates both a directory and ZIP p2 repository under
-`releng/com.cursor.eclipse.repository/target`. Tags matching `v*` publish that
-repository to GitHub Pages through `.github/workflows/release.yml`.
+### From the hosted update site
+
+```
+https://philipp0205.github.io/cursor-eclipse/
+```
+
+**Help → Install New Software…**, paste that URL, select **Cursor**, finish, and
+restart. The site is a p2 composite repository, so this URL keeps working as new
+versions are published.
+
+### From a local build
+
+```sh
+mvn verify
+```
+
+Then **Help → Install New Software… → Add… → Local…** and choose
+`releng/com.cursor.eclipse.repository/target/repository`.
+
+`test/serve-update-site.sh [port]` builds the site and serves it on
+`http://localhost:8080/` instead. Eclipse redirects `http://` update sites to
+`https://` since CVE-2021-41033, so add `-Dp2.httpRule=allow` to `eclipse.ini`
+before using the URL form. Installing from the local folder needs no such flag.
+
+### From a CI build
+
+Every `build` workflow run uploads a `cursor-eclipse-update-site` artifact.
+Download it, unzip, and install from the folder.
+
+## Publishing
+
+`releng/publish-site.sh <version> <built-repository> <site-dir>` adds a build to
+a composite site, regenerating `compositeArtifacts.xml`, `compositeContent.xml`,
+`p2.index`, and a landing page.
+
+`.github/workflows/release.yml` runs it on `v*` tags or on demand: it builds,
+adds the version under `releases/<version>/`, and pushes the result to the
+`gh-pages` branch. Enable **Settings → Pages → Deploy from a branch → gh-pages**
+once, and the URL above stays valid for every later release.

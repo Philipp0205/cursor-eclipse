@@ -15,5 +15,15 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
+
       - name: Verify
         run: mvn -B verify
+
+      # Lets a reviewer install the exact build without tagging a release:
+      # download, unzip, then add the folder in Install New Software.
+      - name: Upload update site
+        uses: actions/upload-artifact@v4
+        with:
+          name: cursor-eclipse-update-site
+          path: releng/com.cursor.eclipse.repository/target/repository
+          if-no-files-found: error
