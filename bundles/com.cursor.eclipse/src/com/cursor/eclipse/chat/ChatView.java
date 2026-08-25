@@ -101,6 +101,10 @@ public class ChatView extends ViewPart {
 
 		modeCombo = new Combo(statusRow, SWT.DROP_DOWN | SWT.READ_ONLY);
 		modeCombo.setToolTipText("Agent mode");
+		GridData modeLayout = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+		// Without a hint the drop-down collapses and clips its label in a narrow view.
+		modeLayout.widthHint = 110;
+		modeCombo.setLayoutData(modeLayout);
 		modeCombo.addListener(SWT.Selection, event -> {
 			int index = modeCombo.getSelectionIndex();
 			if (index >= 0 && index < modes.size()) {

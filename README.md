@@ -28,6 +28,21 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 - Eclipse 2025-09 (4.37) or later, Java 21
 - [Cursor CLI](https://cursor.com/docs/cli/using) on `PATH` (or `~/.local/bin/agent`)
 - `agent login` (or an API key in Preferences → Cursor)
+- Linux only: WebKitGTK (for example `libwebkit2gtk-4.1-0`) for the SWT Browser
+  used by the conversation view
+
+## Architecture
+
+- `com.cursor.eclipse.acp` is a plain Java ACP client: newline-delimited
+  JSON-RPC over the agent's stdio. Inbound agent requests are dispatched off the
+  reader thread so a permission dialog never stalls the stream.
+- `ChatView` owns widgets only. `ChatController` owns the conversation and runs
+  every agent call on a named worker thread, posting updates back to the SWT
+  thread and coalescing streamed text on a timer.
+- The transcript is one SWT `Browser` updated block by block, which keeps long
+  conversations cheap on GTK.
+- Workbench state (active editor, selection, project) is read on the SWT thread
+  before any worker starts.
 
 ## Build
 
@@ -45,14 +60,28 @@ In Eclipse: **Help → Install New Software… → Add…** and choose that fold
 
 ## Use
 
-1. **Window → Show View → Cursor → Cursor**
-2. Click **Connect** (or type a prompt and press Enter; that also connects)
-3. Choose Agent, Plan, or Ask mode.
-4. Chat. If the agent wants to run a tool, Eclipse presents the choices supplied by Cursor.
+1. **Window → Show View → Other… → Cursor → Cursor**
+2. Type a prompt and press Enter; the agent starts automatically. Shift+Enter
+   inserts a newline and Alt+Up/Down walks prompt history.
+3. Choose Agent, Plan, or Ask mode in the dropdown once connected.
+4. Chat. If the agent wants to run a tool, Eclipse presents the choices supplied
+   by Cursor. **Send** becomes **Stop** while a turn is running.
+5. The view toolbar starts a new session; the view menu has Connect, Disconnect,
+   and Preferences.
 
 File access requested over ACP is restricted to the current Eclipse workspace.
 The agent may still use its own filesystem tools according to Cursor's permission
 system, so review permission prompts before approving them.
+
+## Manual testing without a Cursor subscription
+
+`test/fake-acp-agent.py` implements a small ACP agent that exercises streaming
+markdown, thinking, tool status, permission prompts, plans, todos, a workspace
+write, and cancellation.
+
+Point **Window → Preferences → Cursor → Agent binary** at that file with
+arguments `acp`, then send `Run the integration demo`. Sending a prompt
+containing `slow` streams until you press **Stop**.
 
 ## Distribution
 
