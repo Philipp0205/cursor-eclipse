@@ -18,6 +18,7 @@
 		<module>../bundles/com.cursor.eclipse</module>
 		<module>../features/com.cursor.eclipse.feature</module>
 		<module>../releng/com.cursor.eclipse.repository</module>
+		<module>../tests/com.cursor.eclipse.tests</module>
 	</modules>
 
 	<properties>
