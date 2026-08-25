@@ -175,6 +175,8 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 			return new JsonObject();
 		} catch (CoreException e) {
 			throw new IllegalStateException("Could not write workspace file", e);
+		} catch (IOException e) {
+			throw new IllegalStateException("Could not write workspace file", e);
 		}
 	}
 

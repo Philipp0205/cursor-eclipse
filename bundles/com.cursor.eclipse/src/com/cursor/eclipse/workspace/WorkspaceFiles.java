@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 
 import org.eclipse.core.filebuffers.FileBuffers;
@@ -14,7 +15,9 @@ import org.eclipse.core.filebuffers.LocationKind;
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
+import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
@@ -48,17 +51,22 @@ public final class WorkspaceFiles {
 		return String.join("", Arrays.copyOfRange(lines, start, end));
 	}
 
-	public static void write(String absolutePath, String content) throws CoreException {
+	public static void write(String absolutePath, String content) throws CoreException, IOException {
 		Path path = checkedPath(absolutePath);
 		IPath location = org.eclipse.core.runtime.Path.fromOSString(path.toString());
-		IFile file = ResourcesPlugin.getWorkspace().getRoot().getFileForLocation(location);
+		IFile file = resolveWorkspaceFile(location);
 		if (file == null) {
-			throw new IllegalArgumentException("Path is not mapped to an Eclipse workspace file: " + absolutePath);
+			writeOutsideProjects(path, content);
+			return;
 		}
+		writeThroughResource(file, location, content);
+	}
+
+	private static void writeThroughResource(IFile file, IPath location, String content) throws CoreException {
 		ensureParents(file.getParent());
 
 		ITextFileBuffer buffer = FileBuffers.getTextFileBufferManager().getTextFileBuffer(location, LocationKind.LOCATION);
-		if (buffer != null) {
+		if (buffer != null && file.exists()) {
 			buffer.getDocument().set(content);
 			buffer.commit(new NullProgressMonitor(), true);
 			return;
@@ -70,6 +78,46 @@ public final class WorkspaceFiles {
 		} else {
 			file.create(bytes, IResource.FORCE, new NullProgressMonitor());
 		}
+	}
+
+	private static void writeOutsideProjects(Path path, String content) throws CoreException, IOException {
+		if (path.getParent() != null) {
+			Files.createDirectories(path.getParent());
+		}
+		Files.writeString(path, content, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
+				StandardOpenOption.TRUNCATE_EXISTING);
+		ResourcesPlugin.getWorkspace().getRoot().refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+	}
+
+	/**
+	 * Maps an absolute filesystem location to an {@link IFile}. Eclipse returns
+	 * {@code null} from {@link IWorkspaceRoot#getFileForLocation(IPath)} for paths
+	 * outside existing projects (including the workspace root itself), so project
+	 * membership is resolved explicitly.
+	 */
+	static IFile resolveWorkspaceFile(IPath location) {
+		IWorkspaceRoot root = ResourcesPlugin.getWorkspace().getRoot();
+		IFile file = root.getFileForLocation(location);
+		if (file != null) {
+			return file;
+		}
+		IPath workspaceLocation = root.getLocation();
+		if (workspaceLocation == null || !workspaceLocation.isPrefixOf(location)) {
+			return null;
+		}
+		for (IProject project : root.getProjects()) {
+			if (!project.isOpen() || project.getLocation() == null) {
+				continue;
+			}
+			IPath projectLocation = project.getLocation();
+			if (projectLocation.isPrefixOf(location) && !projectLocation.equals(location)) {
+				IPath relative = location.makeRelativeTo(projectLocation);
+				if (relative.segmentCount() > 0) {
+					return project.getFile(relative);
+				}
+			}
+		}
+		return null;
 	}
 
 	private static String documentContent(Path path) {
