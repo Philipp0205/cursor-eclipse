@@ -4,6 +4,9 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
@@ -15,11 +18,21 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.jface.dialogs.InputDialog;
+import org.eclipse.jface.window.Window;
 import org.eclipse.ui.part.ViewPart;
+import org.eclipse.ui.dialogs.ResourceListSelectionDialog;
+import org.eclipse.ui.IMemento;
+import org.eclipse.ui.IViewSite;
+import org.eclipse.ui.PartInitException;
 
 import com.cursor.eclipse.agent.LaunchFactory;
+import com.cursor.eclipse.CursorPlugin;
 import com.cursor.eclipse.agent.SessionMode;
+import com.cursor.eclipse.agent.SessionModel;
+import com.cursor.eclipse.agent.SessionLaunchRegistry;
 import com.cursor.eclipse.workspace.PromptContext;
+import com.cursor.eclipse.prefs.PreferenceConstants;
 import com.google.gson.JsonArray;
 
 /**
@@ -35,18 +48,25 @@ public class ChatView extends ViewPart {
 
 	private static final int INPUT_MIN_HEIGHT = 56;
 	private static final int INPUT_MAX_HEIGHT = 180;
+	private static final String MEMENTO_SESSION_ROOT = "cursorSessionRoot";
 
 	private ConversationBrowser conversation;
 	private Text input;
 	private GridData inputLayout;
 	private Combo modeCombo;
+	private Combo modelCombo;
 	private Label status;
 	private Button send;
+	private Button cloud;
+	private Button attach;
 	private Composite statusRow;
 	private ChatController controller;
+	private File sessionRoot;
 
 	private List<SessionMode> modes = List.of();
+	private List<SessionModel> models = List.of();
 	private final List<String> history = new ArrayList<>();
+	private final List<IFile> attachments = new ArrayList<>();
 	private int historyIndex;
 
 	@Override
@@ -61,10 +81,93 @@ public class ChatView extends ViewPart {
 		conversation.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 
 		createInput(parent);
+		createContextRow(parent);
 		createStatusRow(parent);
 
 		controller = new ChatController(this);
+		if (sessionRoot == null) {
+			sessionRoot = SessionLaunchRegistry.get(getViewSite().getSecondaryId());
+		}
 		refreshState("Disconnected");
+		if (CursorPlugin.getDefault().getPreferenceStore().getBoolean(PreferenceConstants.AUTO_START)) {
+			controller.connect(workingDirectory());
+		}
+	}
+
+	@Override
+	public void init(IViewSite site, IMemento memento) throws PartInitException {
+		super.init(site, memento);
+		if (memento != null) {
+			String root = memento.getString(MEMENTO_SESSION_ROOT);
+			if (root != null && new File(root).isDirectory()) {
+				sessionRoot = new File(root);
+			}
+		}
+	}
+
+	@Override
+	public void saveState(IMemento memento) {
+		if (sessionRoot != null) {
+			memento.putString(MEMENTO_SESSION_ROOT, sessionRoot.getAbsolutePath());
+		}
+		super.saveState(memento);
+	}
+
+	private void createContextRow(Composite parent) {
+		Composite row = new Composite(parent, SWT.NONE);
+		row.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+		GridLayout rowLayout = new GridLayout(2, false);
+		rowLayout.marginHeight = 0;
+		rowLayout.marginWidth = 0;
+		row.setLayout(rowLayout);
+		attach = new Button(row, SWT.PUSH);
+		attach.setText("Attach files\u2026");
+		attach.setToolTipText("Choose Eclipse workspace files to add to the next prompt");
+		attach.addListener(SWT.Selection, event -> {
+			ResourceListSelectionDialog dialog = new ResourceListSelectionDialog(dialogShell(),
+					ResourcesPlugin.getWorkspace().getRoot(), IResource.FILE);
+			dialog.setTitle("Attach workspace files");
+			dialog.setMessage("Choose files to include in the next Cursor prompt");
+			if (dialog.open() == ResourceListSelectionDialog.OK) {
+				attachments.clear();
+				for (Object result : dialog.getResult()) {
+					if (result instanceof IFile file) {
+						attachments.add(file);
+					}
+				}
+				updateAttachmentLabel();
+			}
+		});
+		Combo commands = new Combo(row, SWT.DROP_DOWN | SWT.READ_ONLY);
+		String[] commandItems = { "Commands\u2026", "/summarize", "/worktree", "/best-of-n", "/in-cloud" };
+		commands.setItems(commandItems);
+		commands.select(0);
+		commands.setToolTipText("Insert a Cursor slash command");
+		commands.addListener(SWT.Selection, event -> {
+			int index = commands.getSelectionIndex();
+			if (index > 0) {
+				String command = commandItems[index];
+				commands.getDisplay().asyncExec(() -> {
+					if (!input.isDisposed()) {
+						String prefix = input.getText().isBlank() ? "" : input.getText() + "\n";
+						input.setText(prefix + command + " ");
+						input.setSelection(input.getCharCount());
+						input.setFocus();
+					}
+					if (!commands.isDisposed()) {
+						commands.select(0);
+					}
+				});
+			}
+		});
+	}
+
+	private void updateAttachmentLabel() {
+		if (attach != null && !attach.isDisposed()) {
+			attach.setText(attachments.isEmpty() ? "Attach files\u2026"
+					: "Attached: " + attachments.size() + " file" + (attachments.size() == 1 ? "" : "s"));
+			attach.getParent().layout(true, true);
+		}
 	}
 
 	private void createInput(Composite parent) {
@@ -77,7 +180,7 @@ public class ChatView extends ViewPart {
 		input.addListener(SWT.KeyDown, event -> {
 			if ((event.keyCode == SWT.CR || event.keyCode == SWT.KEYPAD_CR) && (event.stateMask & SWT.SHIFT) == 0) {
 				event.doit = false;
-				sendPrompt();
+				sendPrompt(false);
 				return;
 			}
 			if ((event.stateMask & SWT.ALT) != 0 && event.keyCode == SWT.ARROW_UP) {
@@ -94,7 +197,7 @@ public class ChatView extends ViewPart {
 	private void createStatusRow(Composite parent) {
 		statusRow = new Composite(parent, SWT.NONE);
 		statusRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-		GridLayout layout = new GridLayout(3, false);
+		GridLayout layout = new GridLayout(5, false);
 		layout.marginHeight = 0;
 		layout.marginWidth = 0;
 		statusRow.setLayout(layout);
@@ -112,8 +215,25 @@ public class ChatView extends ViewPart {
 			}
 		});
 
+		modelCombo = new Combo(statusRow, SWT.DROP_DOWN | SWT.READ_ONLY);
+		modelCombo.setToolTipText("Model");
+		GridData modelLayout = new GridData(SWT.LEFT, SWT.CENTER, false, false);
+		modelLayout.widthHint = 150;
+		modelCombo.setLayoutData(modelLayout);
+		modelCombo.addListener(SWT.Selection, event -> {
+			int index = modelCombo.getSelectionIndex();
+			if (index >= 0 && index < models.size()) {
+				controller.setModel(models.get(index).id());
+			}
+		});
+
 		status = new Label(statusRow, SWT.NONE);
 		status.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+		cloud = new Button(statusRow, SWT.PUSH);
+		cloud.setText("Cloud");
+		cloud.setToolTipText("Hand this prompt to a Cursor Cloud Agent");
+		cloud.addListener(SWT.Selection, event -> sendPrompt(true));
 
 		send = new Button(statusRow, SWT.PUSH);
 		send.setText("Send");
@@ -121,24 +241,27 @@ public class ChatView extends ViewPart {
 			if (controller.isBusy()) {
 				controller.cancel();
 			} else {
-				sendPrompt();
+				sendPrompt(false);
 			}
 		});
 	}
 
-	private void sendPrompt() {
+	private void sendPrompt(boolean inCloud) {
 		String text = input.getText().trim();
 		if (text.isEmpty() || controller.isBusy()) {
 			return;
 		}
 		// Editor, selection, and project state must be read on the SWT thread,
 		// before any worker touches the agent.
-		JsonArray prompt = PromptContext.collect(text, getSite().getWorkbenchWindow());
-		File workingDirectory = LaunchFactory.workingDirectory();
+		String agentText = inCloud ? "& " + text : text;
+		JsonArray prompt = PromptContext.collect(agentText, getSite().getWorkbenchWindow(), List.copyOf(attachments));
+		File workingDirectory = workingDirectory();
 		input.setText("");
+		attachments.clear();
+		updateAttachmentLabel();
 		growInput();
 		rememberHistory(text);
-		controller.send(prompt, text, workingDirectory);
+		controller.send(prompt, inCloud ? text + "\n\n_Sent to Cursor Cloud_" : text, workingDirectory);
 	}
 
 	private void rememberHistory(String text) {
@@ -207,6 +330,19 @@ public class ChatView extends ViewPart {
 		}
 	}
 
+	void clearConversationBeforeReplay() {
+		Display display = Display.getDefault();
+		if (display.isDisposed()) {
+			return;
+		}
+		Runnable clear = this::clearConversation;
+		if (display.getThread() == Thread.currentThread()) {
+			clear.run();
+		} else {
+			display.syncExec(clear);
+		}
+	}
+
 	void refreshState() {
 		refreshState(null);
 	}
@@ -221,7 +357,9 @@ public class ChatView extends ViewPart {
 			boolean busy = controller.isBusy();
 			send.setText(busy ? "Stop" : "Send");
 			send.setEnabled(busy || !input.getText().isBlank() || controller.isConnected());
+			cloud.setEnabled(!busy && !input.getText().isBlank());
 			modeCombo.setEnabled(!busy && controller.isConnected() && !modes.isEmpty());
+			modelCombo.setEnabled(!busy && controller.isConnected() && !models.isEmpty());
 			statusRow.layout(true, true);
 		});
 	}
@@ -254,6 +392,34 @@ public class ChatView extends ViewPart {
 		modeCombo.select(index);
 	}
 
+	void setModels(List<SessionModel> available, String currentModelId) {
+		models = List.copyOf(available);
+		if (modelCombo.isDisposed()) {
+			return;
+		}
+		if (models.isEmpty()) {
+			modelCombo.setItems(new String[0]);
+			modelCombo.setEnabled(false);
+			return;
+		}
+		modelCombo.setItems(models.stream().map(SessionModel::name).toArray(String[]::new));
+		selectModel(currentModelId);
+	}
+
+	void selectModel(String modelId) {
+		if (modelCombo.isDisposed() || models.isEmpty()) {
+			return;
+		}
+		int index = 0;
+		for (int i = 0; i < models.size(); i++) {
+			if (models.get(i).id().equals(modelId)) {
+				index = i;
+				break;
+			}
+		}
+		modelCombo.select(index);
+	}
+
 	Shell dialogShell() {
 		Shell shell = getSite() == null ? null : getSite().getShell();
 		if (shell != null && !shell.isDisposed()) {
@@ -267,11 +433,23 @@ public class ChatView extends ViewPart {
 
 	/** Starts a fresh conversation, keeping the agent process alive when possible. */
 	public void newSession() {
-		controller.newSession(LaunchFactory.workingDirectory());
+		controller.newSession(workingDirectory());
 	}
 
 	public void connect() {
-		controller.connect(LaunchFactory.workingDirectory());
+		controller.connect(workingDirectory());
+	}
+
+	public void resumeSession() {
+		InputDialog dialog = new InputDialog(dialogShell(), "Resume Cursor session", "ACP session ID:", "", value ->
+				value == null || value.isBlank() ? "Enter a session ID" : null);
+		if (dialog.open() == Window.OK) {
+			controller.loadSession(dialog.getValue().trim(), workingDirectory());
+		}
+	}
+
+	private File workingDirectory() {
+		return sessionRoot == null ? LaunchFactory.workingDirectory() : sessionRoot;
 	}
 
 	public void disconnect() {
@@ -290,6 +468,7 @@ public class ChatView extends ViewPart {
 		if (controller != null) {
 			controller.shutdown();
 		}
+		SessionLaunchRegistry.remove(getViewSite().getSecondaryId());
 		super.dispose();
 	}
 

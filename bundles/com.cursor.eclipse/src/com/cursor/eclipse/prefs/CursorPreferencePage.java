@@ -2,6 +2,8 @@ package com.cursor.eclipse.prefs;
 
 import org.eclipse.jface.preference.FieldEditorPreferencePage;
 import org.eclipse.jface.preference.StringFieldEditor;
+import org.eclipse.jface.preference.BooleanFieldEditor;
+import org.eclipse.jface.preference.DirectoryFieldEditor;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPreferencePage;
@@ -27,6 +29,10 @@ public class CursorPreferencePage extends FieldEditorPreferencePage implements I
 		addField(new StringFieldEditor(PreferenceConstants.AGENT_PATH, "Agent binary:", getFieldEditorParent()));
 		addField(new StringFieldEditor(PreferenceConstants.AGENT_ARGS, "Arguments:", getFieldEditorParent()));
 		addField(new MaskedStringFieldEditor(PreferenceConstants.API_KEY, "API key:", getFieldEditorParent()));
+		addField(new DirectoryFieldEditor(PreferenceConstants.DEFAULT_CWD, "Default working directory:",
+				getFieldEditorParent()));
+		addField(new BooleanFieldEditor(PreferenceConstants.AUTO_START, "Connect when the Cursor view opens",
+				getFieldEditorParent()));
 	}
 
 	/** Hides the stored key while it is displayed. */

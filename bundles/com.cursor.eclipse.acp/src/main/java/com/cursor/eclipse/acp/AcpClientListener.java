@@ -33,6 +33,11 @@ public interface AcpClientListener {
 		return onUnhandledRequest("fs/write_text_file", params);
 	}
 
+	/** Handles ACP v1 client-owned terminal lifecycle requests. */
+	default JsonObject onTerminalRequest(String method, JsonObject params) {
+		return onUnhandledRequest(method, params);
+	}
+
 	/**
 	 * Cursor-specific blocking extension. Default skips so the agent does not hang.
 	 */

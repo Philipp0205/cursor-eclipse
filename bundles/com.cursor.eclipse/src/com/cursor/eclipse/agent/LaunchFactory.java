@@ -69,6 +69,13 @@ public final class LaunchFactory {
 		if (project != null && project.getLocation() != null) {
 			return project.getLocation().toFile();
 		}
+		String configured = CursorPlugin.getDefault().getPreferenceStore().getString(PreferenceConstants.DEFAULT_CWD);
+		if (configured != null && !configured.isBlank()) {
+			File directory = new File(configured);
+			if (directory.isDirectory()) {
+				return directory;
+			}
+		}
 		return workspaceDirectory();
 	}
 

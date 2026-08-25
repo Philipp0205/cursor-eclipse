@@ -16,6 +16,7 @@ import com.cursor.eclipse.agent.LaunchFactory;
 import com.cursor.eclipse.agent.PermissionOption;
 import com.cursor.eclipse.agent.PlanEntry;
 import com.cursor.eclipse.agent.SessionListener;
+import com.cursor.eclipse.agent.SessionModel;
 import com.cursor.eclipse.agent.SessionMode;
 import com.cursor.eclipse.agent.ToolCall;
 import com.google.gson.JsonArray;
@@ -125,6 +126,25 @@ final class ChatController implements SessionListener {
 		});
 	}
 
+	void loadSession(String sessionId, File workingDirectory) {
+		worker("cursor-load-session", () -> {
+			try {
+				view.clearConversationBeforeReplay();
+				if (!session.isConnected()) {
+					connecting = true;
+					session.startForResume(LaunchFactory.fromPreferences(workingDirectory), sessionId);
+				} else {
+					session.loadSession(sessionId, workingDirectory.getAbsolutePath());
+				}
+				view.refreshState("Resumed " + sessionId);
+			} catch (Exception e) {
+				reportError(e);
+			} finally {
+				connecting = false;
+			}
+		});
+	}
+
 	void connect(File workingDirectory) {
 		if (session.isConnected() || connecting) {
 			return;
@@ -160,6 +180,19 @@ final class ChatController implements SessionListener {
 		});
 	}
 
+	void setModel(String modelId) {
+		if (!session.isConnected()) {
+			return;
+		}
+		worker("cursor-set-model", () -> {
+			try {
+				session.setModel(modelId);
+			} catch (Exception e) {
+				reportError(e);
+			}
+		});
+	}
+
 	/** Stops the agent without blocking the SWT thread. */
 	void shutdown() {
 		new Thread(session::close, "cursor-shutdown").start();
@@ -176,10 +209,16 @@ final class ChatController implements SessionListener {
 	}
 
 	@Override
+	public void onModelsChanged(List<SessionModel> models, String currentModelId) {
+		view.ui(() -> view.setModels(models, currentModelId));
+	}
+
+	@Override
 	public void onDisconnected() {
 		busy = false;
 		view.ui(() -> {
 			view.setModes(List.of(), null);
+			view.setModels(List.of(), null);
 			view.refreshState("Disconnected");
 		});
 	}
@@ -222,9 +261,20 @@ final class ChatController implements SessionListener {
 	}
 
 	@Override
+	public void onModelChanged(String modelId) {
+		view.ui(() -> view.selectModel(modelId));
+	}
+
+	@Override
 	public void onNotice(String message) {
 		String id = "notice-" + System.nanoTime();
 		view.putBlock(id, ConversationHtml.notice(id, message));
+	}
+
+	@Override
+	public void onGeneratedImage(String filePath) {
+		String id = "image-" + System.nanoTime();
+		view.putBlock(id, ConversationHtml.image(id, filePath));
 	}
 
 	@Override

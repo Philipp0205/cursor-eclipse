@@ -15,13 +15,15 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 ## Features
 
 - Streaming Cursor Agent chat with new sessions in the same CLI process
-- Agent, Plan, and Ask modes when advertised by Cursor
+- Agent, Plan, and Ask modes plus model selection when advertised by Cursor
 - Tool progress and explicit permission choices
-- Workspace-confined ACP reads/writes through Eclipse resources
+- Workspace-confined ACP reads/writes and IDE-managed terminal commands
 - Dirty editor contents included in reads; writes preserve local history and run builders
-- Active editor, text selection, and selected Project Explorer files attached to prompts
+- Active editor, text selection, problem markers, selected resources, and explicit file attachments
 - Cursor questions, plan approval, todos, subagent, and generated-image notifications
-- Project/user `.cursor/mcp.json` discovery through Cursor CLI
+- Project/user `.cursor/mcp.json` discovery and ACP session configuration
+- Resumable sessions and multiple parallel agent views, with optional isolated Git worktrees
+- Eclipse Git Staging review, embedded app preview, Cursor cloud dashboard, and `&` cloud handoff
 
 ## Prerequisites
 
@@ -67,7 +69,12 @@ In Eclipse: **Help → Install New Software… → Add…** and choose that fold
 4. Chat. If the agent wants to run a tool, Eclipse presents the choices supplied
    by Cursor. **Send** becomes **Stop** while a turn is running.
 5. The view toolbar starts a new session; the view menu has Connect, Disconnect,
-   and Preferences.
+   Resume, Review changes, Open app preview, Cloud Agents, and Preferences.
+
+Use **New Parallel Cursor Agent** in the view toolbar to open another independent
+agent. Eclipse asks whether its edits should be isolated in a Git worktree. Each
+agent runs in its own normal Eclipse view instance, so views can be tabbed or
+split using standard workbench controls.
 
 File access requested over ACP is restricted to the current Eclipse workspace.
 The agent may still use its own filesystem tools according to Cursor's permission

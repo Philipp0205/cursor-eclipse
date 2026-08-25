@@ -65,6 +65,9 @@ a { color: var(--accent); }
 
 .notice { margin: 6px 0; padding: 6px 10px; border-radius: 6px; background: var(--tool); color: var(--muted); }
 .notice.error { border: 1px solid var(--danger); color: var(--danger); background: transparent; }
+.generated-image { margin: 10px 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.generated-image img { display: block; max-width: 100%; max-height: 520px; margin: auto; border-radius: 4px; }
+.generated-image figcaption { margin-top: 6px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 
 .activity { margin: 6px 0; color: var(--muted); font-weight: 600; }
 .activity::before { content: '\25CC'; display: inline-block; margin-right: 7px; animation: spin .9s linear infinite; }
