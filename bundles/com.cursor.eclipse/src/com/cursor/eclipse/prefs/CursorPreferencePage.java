@@ -13,25 +13,33 @@ public class CursorPreferencePage extends FieldEditorPreferencePage implements I
 	public CursorPreferencePage() {
 		super(GRID);
 		setPreferenceStore(CursorPlugin.getDefault().getPreferenceStore());
-		setDescription("Leave the agent path empty to search PATH and ~/.local/bin/agent. Run `agent login` once in a terminal.");
+		setDescription("Leave the agent binary empty to search PATH and ~/.local/bin/agent.\n"
+				+ "Sign in once by running 'agent login' in a terminal, or set an API key below.");
 	}
 
 	@Override
 	public void init(IWorkbench workbench) {
-		// nothing extra
+		// The preference store is supplied by the constructor.
 	}
 
 	@Override
 	protected void createFieldEditors() {
-		addField(new StringFieldEditor(PreferenceConstants.AGENT_PATH, "Agent binary (optional):",
-				getFieldEditorParent()));
+		addField(new StringFieldEditor(PreferenceConstants.AGENT_PATH, "Agent binary:", getFieldEditorParent()));
 		addField(new StringFieldEditor(PreferenceConstants.AGENT_ARGS, "Arguments:", getFieldEditorParent()));
-		addField(new StringFieldEditor(PreferenceConstants.API_KEY, "API key (optional):", getFieldEditorParent()) {
-			@Override
-			protected void doFillIntoGrid(Composite parent, int numColumns) {
-				super.doFillIntoGrid(parent, numColumns);
-				getTextControl().setEchoChar('*');
-			}
-		});
+		addField(new MaskedStringFieldEditor(PreferenceConstants.API_KEY, "API key:", getFieldEditorParent()));
+	}
+
+	/** Hides the stored key while it is displayed. */
+	private static final class MaskedStringFieldEditor extends StringFieldEditor {
+
+		private MaskedStringFieldEditor(String name, String labelText, Composite parent) {
+			super(name, labelText, parent);
+		}
+
+		@Override
+		protected void doFillIntoGrid(Composite parent, int numColumns) {
+			super.doFillIntoGrid(parent, numColumns);
+			getTextControl().setEchoChar('\u2022');
+		}
 	}
 }

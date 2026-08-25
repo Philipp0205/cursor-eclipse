@@ -1,16 +1,14 @@
 package com.cursor.eclipse.workspace;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IResource;
-import org.eclipse.core.runtime.CoreException;
 import org.eclipse.jface.text.ITextSelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.ui.IEditorPart;
+import org.eclipse.ui.IEditorReference;
+import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.part.FileEditorInput;
 import org.eclipse.ui.texteditor.ITextEditor;
@@ -19,10 +17,15 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 /**
- * Creates ACP prompt blocks from the active editor, selection, and selected
- * Project Explorer resources.
+ * Builds ACP prompt content from the workbench.
+ *
+ * <p>Must be called on the SWT thread: it reads the active editor, its
+ * selection, and the current workbench selection.
  */
 public final class PromptContext {
+
+	private static final int MAX_ATTACHED_FILES = 5;
+	private static final int MAX_FILE_CHARACTERS = 60_000;
 
 	private PromptContext() {
 	}
@@ -30,58 +33,78 @@ public final class PromptContext {
 	public static JsonArray collect(String prompt, IWorkbenchWindow window) {
 		JsonArray blocks = new JsonArray();
 		blocks.add(text(prompt));
-		if (window == null || window.getActivePage() == null) {
+		IWorkbenchPage page = window == null ? null : window.getActivePage();
+		if (page == null) {
 			return blocks;
 		}
 
 		Set<IFile> files = new LinkedHashSet<>();
-		IEditorPart editor = window.getActivePage().getActiveEditor();
+		IEditorPart editor = page.getActiveEditor();
 		if (editor != null && editor.getEditorInput() instanceof FileEditorInput input) {
 			files.add(input.getFile());
 			addSelection(blocks, editor, input.getFile());
 		}
-		if (window.getSelectionService().getSelection() instanceof IStructuredSelection selection) {
+		if (page.getSelection() instanceof IStructuredSelection selection) {
 			for (Object item : selection.toList()) {
 				if (item instanceof IFile file) {
 					files.add(file);
-				} else if (item instanceof IResource resource && resource.getType() == IResource.FILE) {
-					files.add((IFile) resource);
 				}
 			}
 		}
+		for (IEditorReference reference : page.getEditorReferences()) {
+			if (files.size() >= MAX_ATTACHED_FILES) {
+				break;
+			}
+			try {
+				if (reference.getEditorInput() instanceof FileEditorInput input) {
+					files.add(input.getFile());
+				}
+			} catch (Exception ignored) {
+				// A editor whose input cannot be restored is simply not attached.
+			}
+		}
+
+		int attached = 0;
 		for (IFile file : files) {
+			if (attached++ >= MAX_ATTACHED_FILES) {
+				break;
+			}
 			addResource(blocks, file);
 		}
 		return blocks;
 	}
 
 	private static void addSelection(JsonArray blocks, IEditorPart editor, IFile file) {
-		if (!(editor instanceof ITextEditor textEditor)
-				|| !(textEditor.getSelectionProvider().getSelection() instanceof ITextSelection selection)
-				|| selection.isEmpty()) {
+		if (!(editor instanceof ITextEditor textEditor)) {
 			return;
 		}
-		JsonObject block = text("Selected text from " + file.getFullPath() + " (line "
-				+ (selection.getStartLine() + 1) + "):\n" + selection.getText());
-		blocks.add(block);
+		if (!(textEditor.getSelectionProvider().getSelection() instanceof ITextSelection selection)
+				|| selection.getText() == null || selection.getText().isBlank()) {
+			return;
+		}
+		blocks.add(text("Selected text in " + file.getFullPath() + " at line " + (selection.getStartLine() + 1) + ":\n"
+				+ selection.getText()));
 	}
 
 	private static void addResource(JsonArray blocks, IFile file) {
-		if (file.getLocation() == null || !file.exists()) {
+		if (file == null || !file.exists() || file.getLocation() == null) {
 			return;
 		}
 		try {
 			String content = WorkspaceFiles.read(file.getLocation().toOSString(), null, null);
+			if (content.length() > MAX_FILE_CHARACTERS) {
+				content = content.substring(0, MAX_FILE_CHARACTERS) + "\n... truncated by Eclipse ...";
+			}
 			JsonObject resource = new JsonObject();
 			resource.addProperty("uri", file.getLocationURI().toString());
-			resource.addProperty("mimeType", mimeType(file));
 			resource.addProperty("text", content);
+			resource.addProperty("mimeType", "text/plain");
 			JsonObject block = new JsonObject();
 			block.addProperty("type", "resource");
 			block.add("resource", resource);
 			blocks.add(block);
-		} catch (CoreException | IOException ignored) {
-			// A missing/unreadable selected resource should not prevent the prompt.
+		} catch (Exception ignored) {
+			// Attaching context must never block sending the prompt.
 		}
 	}
 
@@ -90,10 +113,5 @@ public final class PromptContext {
 		block.addProperty("type", "text");
 		block.addProperty("text", value);
 		return block;
-	}
-
-	private static String mimeType(IFile file) throws IOException {
-		String detected = Files.probeContentType(file.getLocation().toFile().toPath());
-		return detected == null ? "text/plain" : detected;
 	}
 }

@@ -1,261 +1,295 @@
 package com.cursor.eclipse.chat;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.IStatus;
-import org.eclipse.core.runtime.Status;
-import org.eclipse.core.runtime.jobs.Job;
-import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.swt.SWT;
-import org.eclipse.swt.custom.StyledText;
-import org.eclipse.swt.events.KeyAdapter;
-import org.eclipse.swt.events.KeyEvent;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Button;
-import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Combo;
+import org.eclipse.swt.widgets.Composite;
+import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.part.ViewPart;
 
-import com.cursor.eclipse.CursorPlugin;
-import com.cursor.eclipse.agent.CursorSession;
-import com.cursor.eclipse.agent.CursorSession.SessionMode;
 import com.cursor.eclipse.agent.LaunchFactory;
+import com.cursor.eclipse.agent.SessionMode;
 import com.cursor.eclipse.workspace.PromptContext;
+import com.google.gson.JsonArray;
 
+/**
+ * The Cursor chat view.
+ *
+ * <p>This class owns widgets only; {@link ChatController} owns the agent and the
+ * conversation lifecycle. Every method that a worker thread may call marshals to
+ * the SWT thread itself, so callers never need to know which thread they are on.
+ */
 public class ChatView extends ViewPart {
 
 	public static final String ID = "com.cursor.eclipse.chat.ChatView";
 
-	private StyledText transcript;
+	private static final int INPUT_MIN_HEIGHT = 56;
+	private static final int INPUT_MAX_HEIGHT = 180;
+
+	private ConversationBrowser conversation;
 	private Text input;
+	private GridData inputLayout;
+	private Combo modeCombo;
 	private Label status;
-	private StyledText tasks;
-	private Combo mode;
-	private Button connect;
 	private Button send;
-	private Button cancel;
-	private CursorSession session;
-	private List<SessionMode> availableModes = new ArrayList<>();
+	private Composite statusRow;
+	private ChatController controller;
+
+	private List<SessionMode> modes = List.of();
+	private final List<String> history = new ArrayList<>();
+	private int historyIndex;
 
 	@Override
 	public void createPartControl(Composite parent) {
-		parent.setLayout(new GridLayout(1, false));
+		GridLayout layout = new GridLayout(1, false);
+		layout.marginHeight = 3;
+		layout.marginWidth = 3;
+		layout.verticalSpacing = 3;
+		parent.setLayout(layout);
 
-		Composite toolbar = new Composite(parent, SWT.NONE);
-		toolbar.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-		toolbar.setLayout(new GridLayout(7, false));
+		conversation = new ConversationBrowser(parent);
+		conversation.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 
-		connect = new Button(toolbar, SWT.PUSH);
-		connect.setText("Connect");
-		connect.addListener(SWT.Selection, event -> connectOrDisconnect());
+		createInput(parent);
+		createStatusRow(parent);
 
-		Button newSession = new Button(toolbar, SWT.PUSH);
-		newSession.setText("New session");
-		newSession.addListener(SWT.Selection, event -> newSession());
-
-		mode = new Combo(toolbar, SWT.DROP_DOWN | SWT.READ_ONLY);
-		mode.setToolTipText("Agent mode");
-		mode.setItems("Agent", "Plan", "Ask");
-		mode.select(0);
-		mode.addListener(SWT.Selection, event -> {
-			int selected = mode.getSelectionIndex();
-			if (session != null && session.isConnected() && selected >= 0 && selected < availableModes.size()) {
-				runJob("Change Cursor mode", () -> session.setMode(availableModes.get(selected).id()));
-			}
-		});
-
-		send = new Button(toolbar, SWT.PUSH);
-		send.setText("Send");
-		send.addListener(SWT.Selection, event -> sendPrompt());
-
-		cancel = new Button(toolbar, SWT.PUSH);
-		cancel.setText("Cancel");
-		cancel.addListener(SWT.Selection, event -> {
-			if (session != null) {
-				session.cancel();
-			}
-		});
-
-		status = new Label(toolbar, SWT.NONE);
-		status.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
-		status.setText("Disconnected");
-
-		transcript = new StyledText(parent, SWT.BORDER | SWT.V_SCROLL | SWT.H_SCROLL | SWT.READ_ONLY | SWT.WRAP);
-		transcript.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
-		transcript.setWordWrap(true);
-
-		Label tasksLabel = new Label(parent, SWT.NONE);
-		tasksLabel.setText("Plan / Todos");
-		tasks = new StyledText(parent, SWT.BORDER | SWT.V_SCROLL | SWT.READ_ONLY | SWT.WRAP);
-		GridData tasksData = new GridData(SWT.FILL, SWT.CENTER, true, false);
-		tasksData.heightHint = 96;
-		tasks.setLayoutData(tasksData);
-		tasks.setText("No active plan.");
-
-		input = new Text(parent, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
-		GridData inputData = new GridData(SWT.FILL, SWT.CENTER, true, false);
-		inputData.heightHint = 64;
-		input.setLayoutData(inputData);
-		input.addKeyListener(new KeyAdapter() {
-			@Override
-			public void keyPressed(KeyEvent e) {
-				if (e.keyCode == SWT.CR || e.keyCode == SWT.KEYPAD_CR) {
-					if ((e.stateMask & SWT.SHIFT) == 0) {
-						e.doit = false;
-						sendPrompt();
-					}
-				}
-			}
-		});
-
-		session = new CursorSession(this::appendTranscript, this::setStatus, this::setModes, this::setTasks);
+		controller = new ChatController(this);
+		refreshState("Disconnected");
 	}
 
-	private void connectOrDisconnect() {
-		if (session.isConnected()) {
-			session.stop();
-			connect.setText("Connect");
-			return;
-		}
-		Job job = new Job("Connect Cursor Agent") {
-			@Override
-			protected IStatus run(IProgressMonitor monitor) {
-				try {
-					session.start(LaunchFactory.fromPreferences());
-					asyncUi(() -> connect.setText("Disconnect"));
-					return Status.OK_STATUS;
-				} catch (Exception e) {
-					return new Status(IStatus.ERROR, CursorPlugin.PLUGIN_ID, e.getMessage(), e);
-				}
+	private void createInput(Composite parent) {
+		input = new Text(parent, SWT.BORDER | SWT.MULTI | SWT.WRAP | SWT.V_SCROLL);
+		input.setMessage("Ask Cursor about this workspace\u2026    Enter to send, Shift+Enter for a new line");
+		inputLayout = new GridData(SWT.FILL, SWT.CENTER, true, false);
+		inputLayout.heightHint = INPUT_MIN_HEIGHT;
+		input.setLayoutData(inputLayout);
+
+		input.addListener(SWT.KeyDown, event -> {
+			if ((event.keyCode == SWT.CR || event.keyCode == SWT.KEYPAD_CR) && (event.stateMask & SWT.SHIFT) == 0) {
+				event.doit = false;
+				sendPrompt();
+				return;
 			}
-		};
-		job.setUser(true);
-		job.schedule();
+			if ((event.stateMask & SWT.ALT) != 0 && event.keyCode == SWT.ARROW_UP) {
+				event.doit = false;
+				navigateHistory(-1);
+			} else if ((event.stateMask & SWT.ALT) != 0 && event.keyCode == SWT.ARROW_DOWN) {
+				event.doit = false;
+				navigateHistory(1);
+			}
+		});
+		input.addModifyListener(event -> growInput());
+	}
+
+	private void createStatusRow(Composite parent) {
+		statusRow = new Composite(parent, SWT.NONE);
+		statusRow.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+		GridLayout layout = new GridLayout(3, false);
+		layout.marginHeight = 0;
+		layout.marginWidth = 0;
+		statusRow.setLayout(layout);
+
+		modeCombo = new Combo(statusRow, SWT.DROP_DOWN | SWT.READ_ONLY);
+		modeCombo.setToolTipText("Agent mode");
+		modeCombo.addListener(SWT.Selection, event -> {
+			int index = modeCombo.getSelectionIndex();
+			if (index >= 0 && index < modes.size()) {
+				controller.setMode(modes.get(index).id());
+			}
+		});
+
+		status = new Label(statusRow, SWT.NONE);
+		status.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+		send = new Button(statusRow, SWT.PUSH);
+		send.setText("Send");
+		send.addListener(SWT.Selection, event -> {
+			if (controller.isBusy()) {
+				controller.cancel();
+			} else {
+				sendPrompt();
+			}
+		});
 	}
 
 	private void sendPrompt() {
 		String text = input.getText().trim();
-		if (text.isEmpty()) {
+		if (text.isEmpty() || controller.isBusy()) {
 			return;
 		}
+		// Editor, selection, and project state must be read on the SWT thread,
+		// before any worker touches the agent.
+		JsonArray prompt = PromptContext.collect(text, getSite().getWorkbenchWindow());
+		File workingDirectory = LaunchFactory.workingDirectory();
 		input.setText("");
-		Job job = new Job("Cursor prompt") {
-			@Override
-			protected IStatus run(IProgressMonitor monitor) {
-				try {
-					if (!session.isConnected()) {
-						session.start(LaunchFactory.fromPreferences());
-						asyncUi(() -> connect.setText("Disconnect"));
-					}
-					session.prompt(PromptContext.collect(text, getSite().getWorkbenchWindow()), text);
-					return Status.OK_STATUS;
-				} catch (Exception e) {
-					asyncUi(() -> MessageDialog.openError(getSite().getShell(), "Cursor",
-							e.getMessage() == null ? e.toString() : e.getMessage()));
-					return new Status(IStatus.ERROR, CursorPlugin.PLUGIN_ID, e.getMessage(), e);
-				}
-			}
-		};
-		job.setUser(true);
-		job.schedule();
+		growInput();
+		rememberHistory(text);
+		controller.send(prompt, text, workingDirectory);
 	}
 
-	private void newSession() {
-		if (!session.isConnected()) {
-			connectOrDisconnect();
+	private void rememberHistory(String text) {
+		if (history.isEmpty() || !history.get(history.size() - 1).equals(text)) {
+			history.add(text);
+		}
+		historyIndex = history.size();
+	}
+
+	private void navigateHistory(int direction) {
+		if (history.isEmpty()) {
 			return;
 		}
-		tasks.setText("No active plan.");
-		runJob("New Cursor session", () -> session.newSession(LaunchFactory.workspaceDirectory().getAbsolutePath()));
+		historyIndex = Math.max(0, Math.min(history.size(), historyIndex + direction));
+		input.setText(historyIndex == history.size() ? "" : history.get(historyIndex));
+		input.setSelection(input.getCharCount());
+		growInput();
 	}
 
-	private void runJob(String name, Runnable action) {
-		Job job = new Job(name) {
-			@Override
-			protected IStatus run(IProgressMonitor monitor) {
-				try {
-					action.run();
-					return Status.OK_STATUS;
-				} catch (Exception e) {
-					asyncUi(() -> MessageDialog.openError(getSite().getShell(), "Cursor",
-							e.getMessage() == null ? e.toString() : e.getMessage()));
-					return new Status(IStatus.ERROR, CursorPlugin.PLUGIN_ID, e.getMessage(), e);
-				}
-			}
-		};
-		job.setUser(true);
-		job.schedule();
+	private void growInput() {
+		if (input.isDisposed()) {
+			return;
+		}
+		int preferred = input.computeSize(input.getSize().x, SWT.DEFAULT).y;
+		int height = Math.max(INPUT_MIN_HEIGHT, Math.min(INPUT_MAX_HEIGHT, preferred));
+		if (inputLayout.heightHint != height) {
+			inputLayout.heightHint = height;
+			input.getParent().layout(true, true);
+		}
 	}
 
-	private void setModes(List<SessionMode> modes) {
-		asyncUi(() -> {
-			availableModes = new ArrayList<>(modes);
-			if (availableModes.isEmpty()) {
-				mode.setItems("Agent");
-				mode.select(0);
-				mode.setEnabled(false);
-				return;
-			}
-			mode.setItems(availableModes.stream().map(SessionMode::name).toArray(String[]::new));
-			mode.select(0);
-			mode.setEnabled(true);
-		});
-	}
+	// --- API used by the controller (safe from any thread) -------------------
 
-	private void setTasks(String text) {
-		asyncUi(() -> {
-			if (!tasks.isDisposed()) {
-				tasks.setText(text == null || text.isBlank() ? "No active plan." : text);
-			}
-		});
-	}
-
-	private void appendTranscript(String text) {
-		asyncUi(() -> {
-			if (transcript.isDisposed()) {
-				return;
-			}
-			transcript.append(text);
-			transcript.setTopIndex(transcript.getLineCount() - 1);
-		});
-	}
-
-	private void setStatus(String text) {
-		asyncUi(() -> {
-			if (!status.isDisposed()) {
-				status.setText(text);
-			}
-		});
-	}
-
-	private void asyncUi(Runnable runnable) {
+	/** Runs on the SWT thread if the view is still alive. */
+	void ui(Runnable runnable) {
 		Display display = Display.getDefault();
 		if (display.isDisposed()) {
 			return;
 		}
 		display.asyncExec(() -> {
-			if (!display.isDisposed()) {
+			if (!display.isDisposed() && input != null && !input.isDisposed()) {
 				runnable.run();
 			}
 		});
 	}
 
+	void putBlock(String id, String html) {
+		ui(() -> {
+			if (conversation != null && !conversation.isDisposed()) {
+				conversation.put(id, html);
+			}
+		});
+	}
+
+	void removeBlock(String id) {
+		ui(() -> {
+			if (conversation != null && !conversation.isDisposed()) {
+				conversation.remove(id);
+			}
+		});
+	}
+
+	void clearConversation() {
+		if (conversation != null && !conversation.isDisposed()) {
+			conversation.clear();
+		}
+	}
+
+	void refreshState() {
+		refreshState(null);
+	}
+
+	/** Updates the status text and the enablement of every stateful control. */
+	void refreshState(String message) {
+		ui(() -> {
+			if (message != null) {
+				status.setText(message);
+				status.setToolTipText(message);
+			}
+			boolean busy = controller.isBusy();
+			send.setText(busy ? "Stop" : "Send");
+			send.setEnabled(busy || !input.getText().isBlank() || controller.isConnected());
+			modeCombo.setEnabled(!busy && controller.isConnected() && !modes.isEmpty());
+			statusRow.layout(true, true);
+		});
+	}
+
+	void setModes(List<SessionMode> available, String currentModeId) {
+		modes = List.copyOf(available);
+		if (modeCombo.isDisposed()) {
+			return;
+		}
+		if (modes.isEmpty()) {
+			modeCombo.setItems(new String[0]);
+			modeCombo.setEnabled(false);
+			return;
+		}
+		modeCombo.setItems(modes.stream().map(SessionMode::name).toArray(String[]::new));
+		selectMode(currentModeId);
+	}
+
+	void selectMode(String modeId) {
+		if (modeCombo.isDisposed() || modes.isEmpty()) {
+			return;
+		}
+		int index = 0;
+		for (int i = 0; i < modes.size(); i++) {
+			if (modes.get(i).id().equals(modeId)) {
+				index = i;
+				break;
+			}
+		}
+		modeCombo.select(index);
+	}
+
+	Shell dialogShell() {
+		Shell shell = getSite() == null ? null : getSite().getShell();
+		if (shell != null && !shell.isDisposed()) {
+			return shell;
+		}
+		Display display = Display.getDefault();
+		return display.getShells().length > 0 ? display.getShells()[0] : null;
+	}
+
+	// --- commands ------------------------------------------------------------
+
+	/** Starts a fresh conversation, keeping the agent process alive when possible. */
+	public void newSession() {
+		controller.newSession(LaunchFactory.workingDirectory());
+	}
+
+	public void connect() {
+		controller.connect(LaunchFactory.workingDirectory());
+	}
+
+	public void disconnect() {
+		controller.disconnect();
+	}
+
 	@Override
 	public void setFocus() {
-		input.setFocus();
+		if (input != null && !input.isDisposed()) {
+			input.setFocus();
+		}
 	}
 
 	@Override
 	public void dispose() {
-		if (session != null) {
-			session.close();
+		if (controller != null) {
+			controller.shutdown();
 		}
 		super.dispose();
+	}
+
+	Control conversationControl() {
+		return conversation;
 	}
 }

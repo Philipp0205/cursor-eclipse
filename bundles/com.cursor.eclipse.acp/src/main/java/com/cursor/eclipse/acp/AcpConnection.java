@@ -13,6 +13,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,6 +43,16 @@ public final class AcpConnection implements Closeable {
 	private final AtomicBoolean closed = new AtomicBoolean(false);
 	private final Thread readerThread;
 	private final AtomicReference<String> sessionId = new AtomicReference<>();
+	/**
+	 * Inbound requests run here rather than on the reader thread, so a permission
+	 * dialog cannot stop the client from reading streamed updates or from
+	 * completing the in-flight prompt.
+	 */
+	private final ExecutorService inbound = Executors.newCachedThreadPool(runnable -> {
+		Thread thread = new Thread(runnable, "cursor-eclipse-acp-inbound");
+		thread.setDaemon(true);
+		return thread;
+	});
 
 	public AcpConnection(InputStream input, OutputStream output, AcpClientListener listener) {
 		this(input, output, listener, null);
@@ -253,7 +265,14 @@ public final class AcpConnection implements Closeable {
 		JsonObject params = message.has("params") && message.get("params").isJsonObject()
 				? message.getAsJsonObject("params")
 				: new JsonObject();
-		String id = idToString(message.get("id"));
+		try {
+			inbound.execute(() -> respondToRequest(message, method, params));
+		} catch (RuntimeException rejected) {
+			// Shutting down; the agent observes the closed transport instead.
+		}
+	}
+
+	private void respondToRequest(JsonObject message, String method, JsonObject params) {
 		try {
 			JsonObject result;
 			if ("session/request_permission".equals(method)) {
@@ -362,6 +381,7 @@ public final class AcpConnection implements Closeable {
 			} catch (Exception ignored) {
 			}
 		}
+		inbound.shutdownNow();
 		readerThread.interrupt();
 	}
 

@@ -8,9 +8,72 @@
 		<view
 			id="com.cursor.eclipse.chat.ChatView"
 			name="Cursor"
+			icon="icons/cursor-16.png"
 			restorable="true"
 			category="com.cursor.eclipse.category"
 			class="com.cursor.eclipse.chat.ChatView"/>
+	</extension>
+
+	<extension point="org.eclipse.ui.commands">
+		<category
+			id="com.cursor.eclipse.commands.category"
+			name="Cursor"/>
+		<command
+			id="com.cursor.eclipse.commands.newSession"
+			name="New Cursor Session"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.connect"
+			name="Connect Cursor Agent"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.disconnect"
+			name="Disconnect Cursor Agent"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.openPreferences"
+			name="Cursor Preferences"
+			categoryId="com.cursor.eclipse.commands.category"/>
+	</extension>
+
+	<extension point="org.eclipse.ui.handlers">
+		<handler
+			commandId="com.cursor.eclipse.commands.newSession"
+			class="com.cursor.eclipse.chat.handlers.NewSessionHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.connect"
+			class="com.cursor.eclipse.chat.handlers.ConnectHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.disconnect"
+			class="com.cursor.eclipse.chat.handlers.DisconnectHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.openPreferences"
+			class="com.cursor.eclipse.chat.handlers.OpenPreferencesHandler"/>
+	</extension>
+
+	<extension point="org.eclipse.ui.menus">
+		<menuContribution locationURI="toolbar:com.cursor.eclipse.chat.ChatView">
+			<command
+				commandId="com.cursor.eclipse.commands.newSession"
+				icon="icons/new-session.png"
+				tooltip="Start a new Cursor session"
+				style="push"/>
+		</menuContribution>
+		<menuContribution locationURI="menu:com.cursor.eclipse.chat.ChatView">
+			<command
+				commandId="com.cursor.eclipse.commands.connect"
+				label="Connect"
+				style="push"/>
+			<command
+				commandId="com.cursor.eclipse.commands.disconnect"
+				label="Disconnect"
+				style="push"/>
+			<separator name="cursor.separator" visible="true"/>
+			<command
+				commandId="com.cursor.eclipse.commands.openPreferences"
+				label="Preferences"
+				style="push"/>
+		</menuContribution>
 	</extension>
 
 	<extension point="org.eclipse.ui.preferencePages">

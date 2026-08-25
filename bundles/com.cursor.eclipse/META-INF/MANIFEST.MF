@@ -6,14 +6,15 @@ Bundle-Version: 0.1.0.qualifier
 Bundle-Activator: com.cursor.eclipse.CursorPlugin
 Bundle-Vendor: cursor-eclipse
 Require-Bundle: org.eclipse.ui,
+ org.eclipse.ui.ide,
+ org.eclipse.ui.workbench.texteditor,
+ org.eclipse.core.commands,
  org.eclipse.core.runtime,
  org.eclipse.core.resources,
  org.eclipse.core.filebuffers,
  org.eclipse.jface,
  org.eclipse.jface.text,
- org.eclipse.swt,
- org.eclipse.ui.ide,
- org.eclipse.ui.workbench.texteditor
+ org.eclipse.swt
 Bundle-RequiredExecutionEnvironment: JavaSE-21
 Automatic-Module-Name: com.cursor.eclipse
 Bundle-ActivationPolicy: lazy

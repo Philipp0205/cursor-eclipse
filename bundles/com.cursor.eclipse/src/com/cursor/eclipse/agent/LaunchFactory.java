@@ -22,37 +22,47 @@ import com.cursor.eclipse.acp.AgentLocator;
 import com.cursor.eclipse.acp.CursorAgentLaunch;
 import com.cursor.eclipse.prefs.PreferenceConstants;
 
+/** Builds the {@code agent acp} launch from preferences and workspace state. */
 public final class LaunchFactory {
 
 	private LaunchFactory() {
 	}
 
-	public static CursorAgentLaunch fromPreferences() {
+	/**
+	 * Builds a launch rooted at {@code workingDirectory}.
+	 *
+	 * <p>Safe to call from any thread: the caller supplies the directory so this
+	 * method never reads workbench state.
+	 */
+	public static CursorAgentLaunch fromPreferences(File workingDirectory) {
 		IPreferenceStore store = CursorPlugin.getDefault().getPreferenceStore();
 		File executable = AgentLocator.find(store.getString(PreferenceConstants.AGENT_PATH))
 				.orElseThrow(() -> new IllegalStateException(
-						"Cursor agent binary not found. Set Window → Preferences → Cursor, or install the CLI so `agent` is on PATH."));
+						"Cursor agent binary not found. Set it in Window > Preferences > Cursor, "
+								+ "or install the Cursor CLI so 'agent' is on PATH."));
 		List<String> args = parseArgs(store.getString(PreferenceConstants.AGENT_ARGS));
 		if (args.isEmpty()) {
 			args = List.of("acp");
 		}
 		return CursorAgentLaunch.builder(executable)
 				.arguments(args)
-				.workingDirectory(workingDirectory())
+				.workingDirectory(workingDirectory == null ? workspaceDirectory() : workingDirectory)
 				.apiKey(store.getString(PreferenceConstants.API_KEY))
 				.build();
 	}
 
+	/** The workspace root on disk. Safe from any thread. */
 	public static File workspaceDirectory() {
 		IPath location = ResourcesPlugin.getWorkspace().getRoot().getLocation();
-		if (location != null) {
-			return location.toFile();
-		}
-		return new File(System.getProperty("user.dir"));
+		return location != null ? location.toFile() : new File(System.getProperty("user.dir"));
 	}
 
 	/**
-	 * Prefer the selected project, else a single open project, else workspace root.
+	 * The best working directory for a new session: the selected project, else the
+	 * only open project, else the workspace root.
+	 *
+	 * <p>Must be called on the SWT thread because it inspects the active editor and
+	 * selection.
 	 */
 	public static File workingDirectory() {
 		IProject project = selectedProject();
@@ -62,34 +72,29 @@ public final class LaunchFactory {
 		return workspaceDirectory();
 	}
 
-	static IProject selectedProject() {
+	private static IProject selectedProject() {
 		if (PlatformUI.isWorkbenchRunning()) {
 			IWorkbenchWindow window = PlatformUI.getWorkbench().getActiveWorkbenchWindow();
-			if (window != null) {
-				IWorkbenchPage page = window.getActivePage();
-				if (page != null) {
-					if (page.getSelection() instanceof IStructuredSelection selection) {
-						Object first = selection.getFirstElement();
-						if (first instanceof IResource resource) {
-							IProject project = resource.getProject();
-							if (project != null && project.isOpen()) {
-								return project;
-							}
-						}
+			IWorkbenchPage page = window == null ? null : window.getActivePage();
+			if (page != null) {
+				if (page.getSelection() instanceof IStructuredSelection selection
+						&& selection.getFirstElement() instanceof IResource resource) {
+					IProject project = resource.getProject();
+					if (project != null && project.isOpen()) {
+						return project;
 					}
-					IEditorPart editor = page.getActiveEditor();
-					if (editor != null && editor.getEditorInput() instanceof FileEditorInput input) {
-						IProject project = input.getFile().getProject();
-						if (project != null && project.isOpen()) {
-							return project;
-						}
+				}
+				IEditorPart editor = page.getActiveEditor();
+				if (editor != null && editor.getEditorInput() instanceof FileEditorInput input) {
+					IProject project = input.getFile().getProject();
+					if (project != null && project.isOpen()) {
+						return project;
 					}
 				}
 			}
 		}
-		IProject[] projects = ResourcesPlugin.getWorkspace().getRoot().getProjects(IResource.DEPTH_ONE);
 		List<IProject> open = new ArrayList<>();
-		for (IProject project : projects) {
+		for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects()) {
 			if (project.isOpen()) {
 				open.add(project);
 			}

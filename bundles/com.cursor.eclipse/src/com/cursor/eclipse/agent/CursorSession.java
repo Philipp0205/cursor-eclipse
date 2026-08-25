@@ -3,13 +3,8 @@ package com.cursor.eclipse.agent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
-
-import org.eclipse.core.runtime.CoreException;
-import org.eclipse.jface.dialogs.MessageDialog;
-import org.eclipse.swt.widgets.Display;
-import org.eclipse.swt.widgets.Shell;
 
 import com.cursor.eclipse.acp.AcpClientListener;
 import com.cursor.eclipse.acp.AcpConnection;
@@ -21,170 +16,173 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+/**
+ * Owns one {@code agent acp} process and translates ACP traffic into
+ * {@link SessionListener} events.
+ *
+ * <p>No method holds a lock while calling the listener, so the UI thread can
+ * always cancel or disconnect while a prompt is in flight.
+ */
 public final class CursorSession implements AutoCloseable, AcpClientListener {
 
-	public record SessionMode(String id, String name, String description) {
-	}
-
-	private final Consumer<String> transcript;
-	private final Consumer<String> status;
-	private final Consumer<List<SessionMode>> modes;
-	private final Consumer<String> tasks;
+	private final SessionListener listener;
 	private final AtomicReference<AcpConnection> connection = new AtomicReference<>();
-	private volatile boolean cancelling;
+	private final AtomicBoolean cancelling = new AtomicBoolean();
+	private final AtomicBoolean busy = new AtomicBoolean();
 
-	public CursorSession(Consumer<String> transcript, Consumer<String> status,
-			Consumer<List<SessionMode>> modes, Consumer<String> tasks) {
-		this.transcript = transcript;
-		this.status = status;
-		this.modes = modes;
-		this.tasks = tasks;
+	public CursorSession(SessionListener listener) {
+		this.listener = listener;
 	}
 
-	public synchronized void start(CursorAgentLaunch launch) throws IOException {
+	/** Starts the agent and opens a session. Blocking; call from a worker thread. */
+	public void start(CursorAgentLaunch launch) throws IOException {
 		stop();
-		status.accept("Starting " + launch.getExecutable().getAbsolutePath() + " …");
 		AcpConnection acp = AcpConnection.connect(launch, this);
 		connection.set(acp);
-		JsonObject init = acp.initialize();
-		authenticateIfNeeded(acp, init);
-		String cwd = launch.getWorkingDirectory().getAbsolutePath();
-		JsonObject session = acp.newSession(cwd);
-		publishModes(session);
-		status.accept("Connected · session " + acp.getSessionId());
-		transcript.accept("[system] Connected to Cursor Agent via ACP.\n");
+		try {
+			JsonObject init = acp.initialize();
+			authenticateIfNeeded(acp, init);
+			JsonObject session = acp.newSession(launch.getWorkingDirectory().getAbsolutePath());
+			publishConnected(acp, session);
+		} catch (RuntimeException e) {
+			stop();
+			throw e;
+		}
 	}
 
-	public synchronized void prompt(JsonArray prompt, String displayText) {
+	/** Sends a prompt and returns its stop reason. Blocking; call from a worker thread. */
+	public String prompt(JsonArray prompt) {
+		AcpConnection acp = require();
+		cancelling.set(false);
+		busy.set(true);
+		try {
+			JsonObject result = acp.prompt(prompt);
+			return string(result, "stopReason", "end_turn");
+		} finally {
+			busy.set(false);
+		}
+	}
+
+	/** Starts a new conversation on the running agent. Blocking; call from a worker thread. */
+	public void newSession(String cwd) {
+		AcpConnection acp = require();
+		publishConnected(acp, acp.newSession(cwd));
+	}
+
+	/** Switches agent mode. Blocking; call from a worker thread. */
+	public void setMode(String modeId) {
+		require().setMode(modeId);
+	}
+
+	/** Requests cancellation of the current turn. Returns immediately. */
+	public void cancel() {
 		AcpConnection acp = connection.get();
 		if (acp == null) {
-			throw new IllegalStateException("Not connected");
+			return;
 		}
-		cancelling = false;
-		transcript.accept("You: " + displayText + "\n");
-		status.accept("Waiting for Cursor…");
-		JsonObject result = acp.prompt(prompt);
-		String stop = result.has("stopReason") ? result.get("stopReason").getAsString() : "done";
-		status.accept("Idle · " + stop);
-		transcript.accept("\n");
+		cancelling.set(true);
+		acp.cancel();
 	}
 
-	public synchronized void cancel() {
-		AcpConnection acp = connection.get();
-		if (acp != null) {
-			cancelling = true;
-			acp.cancel();
-			status.accept("Cancelling…");
-		}
-	}
-
-	public synchronized void newSession(String cwd) {
-		AcpConnection acp = requireConnection();
-		JsonObject result = acp.newSession(cwd);
-		publishModes(result);
-		transcript.accept("\n[system] New session " + acp.getSessionId() + "\n");
-		status.accept("Connected · session " + acp.getSessionId());
-	}
-
-	public void setMode(String modeId) {
-		requireConnection().setMode(modeId);
-		status.accept("Mode · " + modeId);
-	}
-
-	public synchronized void stop() {
+	/** Stops the agent process. Safe to call repeatedly. */
+	public void stop() {
 		AcpConnection acp = connection.getAndSet(null);
-		if (acp != null) {
-			acp.close();
-			status.accept("Disconnected");
+		if (acp == null) {
+			return;
 		}
+		cancelling.set(true);
+		busy.set(false);
+		acp.close();
+		listener.onDisconnected();
 	}
 
 	public boolean isConnected() {
 		return connection.get() != null;
 	}
 
+	public boolean isBusy() {
+		return busy.get();
+	}
+
+	@Override
+	public void close() {
+		stop();
+	}
+
+	// --- ACP callbacks -------------------------------------------------------
+
 	@Override
 	public void onSessionUpdate(JsonObject params) {
-		String chunk = SessionUpdates.agentTextChunk(params);
-		if (chunk != null) {
-			transcript.accept(chunk);
-			return;
-		}
-		String tool = SessionUpdates.toolSummary(params);
-		if (tool != null) {
-			transcript.accept("\n[tool] " + tool + "\n");
-			return;
-		}
 		JsonObject update = SessionUpdates.updateObject(params);
-		if (update != null && "plan".equals(SessionUpdates.kind(params))) {
-			tasks.accept(formatPlan(update));
+		if (update == null) {
+			return;
+		}
+		String kind = SessionUpdates.kind(params);
+		if (kind == null) {
+			return;
+		}
+		switch (kind) {
+		case "agent_message_chunk" -> {
+			String text = SessionUpdates.agentTextChunk(params);
+			if (text != null) {
+				listener.onAgentText(text);
+			}
+		}
+		case "agent_thought_chunk" -> {
+			String text = SessionUpdates.agentTextChunk(params);
+			if (text != null) {
+				listener.onAgentThought(text);
+			}
+		}
+		case "tool_call", "tool_call_update" -> listener.onToolCall(toolCall(update));
+		case "plan" -> listener.onPlan(entries(update.getAsJsonArray("entries")));
+		case "current_mode_update" -> listener.onModeChanged(string(update, "modeId", null));
+		default -> {
+			// Other update kinds carry no user-visible content yet.
+		}
 		}
 	}
 
 	@Override
 	public JsonObject onRequestPermission(JsonObject params) {
-		if (cancelling) {
+		if (cancelling.get()) {
 			return PermissionDecisions.cancelled();
 		}
-		AtomicReference<JsonObject> decision = new AtomicReference<>(PermissionDecisions.rejectOnce());
-		Display display = Display.getDefault();
-		display.syncExec(() -> {
-			Shell shell = activeShell(display);
-			String details = describePermission(params);
-			JsonArray options = params.has("options") && params.get("options").isJsonArray()
-					? params.getAsJsonArray("options") : new JsonArray();
-			if (options.isEmpty()) {
-				boolean allow = MessageDialog.openQuestion(shell, "Cursor wants to run a tool",
-						details + "\n\nAllow this tool call once?");
-				decision.set(allow ? PermissionDecisions.allowOnce() : PermissionDecisions.rejectOnce());
-				return;
-			}
-			String[] labels = new String[options.size()];
-			for (int i = 0; i < options.size(); i++) {
-				JsonObject option = options.get(i).getAsJsonObject();
-				labels[i] = option.has("name") ? option.get("name").getAsString() : option.get("optionId").getAsString();
-			}
-			MessageDialog dialog = new MessageDialog(shell, "Cursor wants to run a tool", null, details,
-					MessageDialog.QUESTION, labels, 0);
-			int selected = dialog.open();
-			if (selected >= 0 && selected < options.size()) {
-				decision.set(PermissionDecisions.selected(
-						options.get(selected).getAsJsonObject().get("optionId").getAsString()));
-			}
-		});
-		return decision.get();
+		List<PermissionOption> options = permissionOptions(params);
+		String chosen = listener.askPermission(permissionTitle(params), options);
+		if (chosen == null) {
+			return PermissionDecisions.rejectOnce();
+		}
+		return PermissionDecisions.selected(chosen);
 	}
 
 	@Override
 	public JsonObject onReadTextFile(JsonObject params) {
 		try {
-			Integer line = number(params, "line");
-			Integer limit = number(params, "limit");
 			JsonObject result = new JsonObject();
-			result.addProperty("content", WorkspaceFiles.read(requiredString(params, "path"), line, limit));
+			result.addProperty("content", WorkspaceFiles.read(required(params, "path"),
+					number(params, "line"), number(params, "limit")));
 			return result;
-		} catch (CoreException | IOException e) {
-			throw new IllegalStateException("Could not read workspace file", e);
+		} catch (Exception e) {
+			throw new IllegalStateException(message(e, "Could not read file"), e);
 		}
 	}
 
 	@Override
 	public JsonObject onWriteTextFile(JsonObject params) {
 		try {
-			WorkspaceFiles.write(requiredString(params, "path"), requiredString(params, "content"));
+			WorkspaceFiles.write(required(params, "path"), required(params, "content"));
 			return new JsonObject();
-		} catch (CoreException e) {
-			throw new IllegalStateException("Could not write workspace file", e);
-		} catch (IOException e) {
-			throw new IllegalStateException("Could not write workspace file", e);
+		} catch (Exception e) {
+			throw new IllegalStateException(message(e, "Could not write file"), e);
 		}
 	}
 
 	@Override
 	public JsonObject onCursorRequest(String method, JsonObject params) {
 		return switch (method) {
-		case "cursor/ask_question" -> askQuestions(params);
-		case "cursor/create_plan" -> confirmPlan(params);
+		case "cursor/ask_question" -> answerQuestions(params);
+		case "cursor/create_plan" -> approvePlan(params);
 		default -> AcpClientListener.super.onCursorRequest(method, params);
 		};
 	}
@@ -192,18 +190,152 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	@Override
 	public void onNotification(String method, JsonObject params) {
 		switch (method) {
-		case "cursor/update_todos" -> tasks.accept(formatTodos(params));
-		case "cursor/task" -> transcript.accept("\n[subagent] " + string(params, "description", "Task completed") + "\n");
-		case "cursor/generate_image" -> transcript.accept("\n[image] " + string(params, "filePath", "Image generated") + "\n");
+		case "cursor/update_todos" -> listener.onTodos(entries(params.getAsJsonArray("todos")));
+		case "cursor/task" -> listener.onNotice("Subagent: " + string(params, "description", "task completed"));
+		case "cursor/generate_image" -> listener.onNotice("Image: " + string(params, "filePath", "generated"));
 		default -> {
+			// Unknown notifications are ignored so new agent features do not break the view.
 		}
 		}
 	}
 
 	@Override
 	public void onTransportError(Throwable error) {
-		status.accept("Transport error: " + error.getMessage());
-		transcript.accept("\n[error] " + error.getMessage() + "\n");
+		listener.onError(message(error, "The Cursor agent connection failed"));
+	}
+
+	// --- helpers -------------------------------------------------------------
+
+	private void publishConnected(AcpConnection acp, JsonObject session) {
+		List<SessionMode> modes = new ArrayList<>();
+		String current = null;
+		if (session.has("modes") && session.get("modes").isJsonObject()) {
+			JsonObject state = session.getAsJsonObject("modes");
+			current = string(state, "currentModeId", null);
+			if (state.has("availableModes") && state.get("availableModes").isJsonArray()) {
+				for (JsonElement element : state.getAsJsonArray("availableModes")) {
+					if (!element.isJsonObject()) {
+						continue;
+					}
+					JsonObject mode = element.getAsJsonObject();
+					String id = string(mode, "id", null);
+					if (id != null) {
+						modes.add(new SessionMode(id, string(mode, "name", id), string(mode, "description", "")));
+					}
+				}
+			}
+		}
+		listener.onConnected(acp.getSessionId(), List.copyOf(modes), current);
+	}
+
+	private JsonObject answerQuestions(JsonObject params) {
+		JsonArray answers = new JsonArray();
+		JsonArray questions = array(params, "questions");
+		String title = string(params, "title", "Cursor needs input");
+		for (JsonElement element : questions) {
+			if (!element.isJsonObject()) {
+				continue;
+			}
+			JsonObject question = element.getAsJsonObject();
+			List<PermissionOption> options = new ArrayList<>();
+			for (JsonElement option : array(question, "options")) {
+				JsonObject value = option.getAsJsonObject();
+				String id = string(value, "id", null);
+				if (id != null) {
+					options.add(new PermissionOption(id, string(value, "label", id), null));
+				}
+			}
+			String chosen = listener.askQuestion(title, string(question, "prompt", "Choose an option"), options);
+			if (chosen == null) {
+				return outcome("skipped");
+			}
+			JsonObject answer = new JsonObject();
+			answer.addProperty("questionId", string(question, "id", ""));
+			JsonArray selected = new JsonArray();
+			selected.add(chosen);
+			answer.add("selectedOptionIds", selected);
+			answers.add(answer);
+		}
+		JsonObject answered = new JsonObject();
+		answered.addProperty("outcome", "answered");
+		answered.add("answers", answers);
+		JsonObject result = new JsonObject();
+		result.add("outcome", answered);
+		return result;
+	}
+
+	private JsonObject approvePlan(JsonObject params) {
+		String markdown = string(params, "plan", string(params, "overview", "Cursor proposed a plan."));
+		boolean accepted = listener.askPlanApproval(string(params, "name", "Cursor plan"), markdown);
+		return outcome(accepted ? "accepted" : "rejected");
+	}
+
+	private static List<PermissionOption> permissionOptions(JsonObject params) {
+		List<PermissionOption> options = new ArrayList<>();
+		for (JsonElement element : array(params, "options")) {
+			if (!element.isJsonObject()) {
+				continue;
+			}
+			JsonObject option = element.getAsJsonObject();
+			String id = string(option, "optionId", null);
+			if (id != null) {
+				options.add(new PermissionOption(id, string(option, "name", id), string(option, "kind", null)));
+			}
+		}
+		if (options.isEmpty()) {
+			options.add(new PermissionOption("allow-once", "Allow once", "allow_once"));
+			options.add(new PermissionOption("reject-once", "Reject", "reject_once"));
+		}
+		return options;
+	}
+
+	private static String permissionTitle(JsonObject params) {
+		if (params.has("toolCall") && params.get("toolCall").isJsonObject()) {
+			JsonObject call = params.getAsJsonObject("toolCall");
+			String title = string(call, "title", null);
+			if (title != null) {
+				return title;
+			}
+		}
+		return "Cursor wants to run a tool";
+	}
+
+	private static ToolCall toolCall(JsonObject update) {
+		return new ToolCall(string(update, "toolCallId", "tool"), string(update, "title", null),
+				string(update, "kind", null), string(update, "status", null), toolDetail(update));
+	}
+
+	private static String toolDetail(JsonObject update) {
+		if (update.has("locations") && update.get("locations").isJsonArray()) {
+			JsonArray locations = update.getAsJsonArray("locations");
+			if (!locations.isEmpty() && locations.get(0).isJsonObject()) {
+				return string(locations.get(0).getAsJsonObject(), "path", null);
+			}
+		}
+		if (update.has("rawInput") && update.get("rawInput").isJsonObject()) {
+			JsonObject input = update.getAsJsonObject("rawInput");
+			for (String key : new String[] { "path", "filePath", "command", "pattern", "query" }) {
+				String value = string(input, key, null);
+				if (value != null) {
+					return value;
+				}
+			}
+		}
+		return null;
+	}
+
+	private static List<PlanEntry> entries(JsonArray array) {
+		List<PlanEntry> entries = new ArrayList<>();
+		if (array != null) {
+			for (JsonElement element : array) {
+				if (!element.isJsonObject()) {
+					continue;
+				}
+				JsonObject entry = element.getAsJsonObject();
+				entries.add(new PlanEntry(string(entry, "content", ""), string(entry, "status", "pending")));
+			}
+		}
+		return List.copyOf(entries);
 	}
 
 	private static void authenticateIfNeeded(AcpConnection acp, JsonObject init) {
@@ -211,80 +343,27 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 			return;
 		}
 		JsonArray methods = init.getAsJsonArray("authMethods");
+		if (methods.isEmpty()) {
+			return;
+		}
 		for (JsonElement element : methods) {
-			if (!element.isJsonObject()) {
-				continue;
-			}
-			JsonObject method = element.getAsJsonObject();
-			if (method.has("id") && "cursor_login".equals(method.get("id").getAsString())) {
+			if (element.isJsonObject() && "cursor_login".equals(string(element.getAsJsonObject(), "id", null))) {
 				acp.authenticate("cursor_login");
 				return;
 			}
 		}
-		if (methods.size() > 0 && methods.get(0).isJsonObject() && methods.get(0).getAsJsonObject().has("id")) {
-			acp.authenticate(methods.get(0).getAsJsonObject().get("id").getAsString());
+		String first = methods.get(0).isJsonObject() ? string(methods.get(0).getAsJsonObject(), "id", null) : null;
+		if (first != null) {
+			acp.authenticate(first);
 		}
 	}
 
-	private static String describePermission(JsonObject params) {
-		if (params == null) {
-			return "The agent requested permission for a tool call.";
+	private AcpConnection require() {
+		AcpConnection acp = connection.get();
+		if (acp == null) {
+			throw new IllegalStateException("Not connected to the Cursor agent");
 		}
-		if (params.has("toolCall") && params.get("toolCall").isJsonObject()) {
-			JsonObject call = params.getAsJsonObject("toolCall");
-			return string(call, "title", "Cursor requested a tool call");
-		}
-		return "The agent requested permission:\n" + params;
-	}
-
-	private JsonObject askQuestions(JsonObject params) {
-		AtomicReference<JsonObject> response = new AtomicReference<>();
-		Display.getDefault().syncExec(() -> {
-			JsonArray answers = new JsonArray();
-			JsonArray questions = params.has("questions") ? params.getAsJsonArray("questions") : new JsonArray();
-			for (JsonElement element : questions) {
-				JsonObject question = element.getAsJsonObject();
-				JsonArray options = question.getAsJsonArray("options");
-				String[] labels = new String[options.size() + 1];
-				for (int i = 0; i < options.size(); i++) {
-					labels[i] = string(options.get(i).getAsJsonObject(), "label", "Option " + (i + 1));
-				}
-				labels[options.size()] = "Skip";
-				MessageDialog dialog = new MessageDialog(activeShell(Display.getDefault()),
-						string(params, "title", "Cursor needs input"), null,
-						string(question, "prompt", "Choose an option"), MessageDialog.QUESTION, labels, 0);
-				int selected = dialog.open();
-				if (selected < 0 || selected >= options.size()) {
-					response.set(outcome("skipped"));
-					return;
-				}
-				JsonObject answer = new JsonObject();
-				answer.addProperty("questionId", requiredString(question, "id"));
-				JsonArray selectedIds = new JsonArray();
-				selectedIds.add(requiredString(options.get(selected).getAsJsonObject(), "id"));
-				answer.add("selectedOptionIds", selectedIds);
-				answers.add(answer);
-			}
-			JsonObject answered = new JsonObject();
-			answered.addProperty("outcome", "answered");
-			answered.add("answers", answers);
-			JsonObject result = new JsonObject();
-			result.add("outcome", answered);
-			response.set(result);
-		});
-		return response.get();
-	}
-
-	private JsonObject confirmPlan(JsonObject params) {
-		AtomicReference<JsonObject> response = new AtomicReference<>();
-		Display.getDefault().syncExec(() -> {
-			String plan = string(params, "plan", string(params, "overview", "Cursor created a plan."));
-			tasks.accept(plan);
-			boolean accepted = MessageDialog.openQuestion(activeShell(Display.getDefault()),
-					string(params, "name", "Cursor plan"), plan + "\n\nAccept this plan?");
-			response.set(outcome(accepted ? "accepted" : "rejected"));
-		});
-		return response.get();
+		return acp;
 	}
 
 	private static JsonObject outcome(String value) {
@@ -295,79 +374,30 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 		return result;
 	}
 
-	private void publishModes(JsonObject session) {
-		List<SessionMode> available = new ArrayList<>();
-		if (session.has("modes") && session.get("modes").isJsonObject()) {
-			JsonObject modeState = session.getAsJsonObject("modes");
-			if (modeState.has("availableModes")) {
-				for (JsonElement element : modeState.getAsJsonArray("availableModes")) {
-					JsonObject mode = element.getAsJsonObject();
-					available.add(new SessionMode(requiredString(mode, "id"),
-							string(mode, "name", requiredString(mode, "id")), string(mode, "description", "")));
-				}
-			}
-		}
-		modes.accept(List.copyOf(available));
-	}
-
-	private AcpConnection requireConnection() {
-		AcpConnection acp = connection.get();
-		if (acp == null) {
-			throw new IllegalStateException("Not connected");
-		}
-		return acp;
-	}
-
-	private static Shell activeShell(Display display) {
-		Shell shell = display.getActiveShell();
-		if (shell == null && display.getShells().length > 0) {
-			shell = display.getShells()[0];
-		}
-		return shell;
+	private static JsonArray array(JsonObject object, String key) {
+		return object != null && object.has(key) && object.get(key).isJsonArray() ? object.getAsJsonArray(key)
+				: new JsonArray();
 	}
 
 	private static Integer number(JsonObject object, String key) {
-		return object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsInt() : null;
+		return object.has(key) && object.get(key).isJsonPrimitive() ? object.get(key).getAsInt() : null;
 	}
 
-	private static String requiredString(JsonObject object, String key) {
-		if (!object.has(key) || object.get(key).isJsonNull()) {
-			throw new IllegalArgumentException("Missing required field: " + key);
+	private static String required(JsonObject object, String key) {
+		String value = string(object, key, null);
+		if (value == null) {
+			throw new IllegalArgumentException("The agent omitted the required field '" + key + "'");
 		}
-		return object.get(key).getAsString();
+		return value;
 	}
 
 	private static String string(JsonObject object, String key, String fallback) {
-		return object != null && object.has(key) && !object.get(key).isJsonNull()
-				? object.get(key).getAsString() : fallback;
+		return object != null && object.has(key) && object.get(key).isJsonPrimitive() ? object.get(key).getAsString()
+				: fallback;
 	}
 
-	private static String formatPlan(JsonObject update) {
-		StringBuilder text = new StringBuilder("Plan\n");
-		if (update.has("entries")) {
-			for (JsonElement element : update.getAsJsonArray("entries")) {
-				JsonObject entry = element.getAsJsonObject();
-				text.append("• [").append(string(entry, "status", "pending")).append("] ")
-						.append(string(entry, "content", "")).append('\n');
-			}
-		}
-		return text.toString();
-	}
-
-	private static String formatTodos(JsonObject params) {
-		StringBuilder text = new StringBuilder("Todos\n");
-		if (params.has("todos")) {
-			for (JsonElement element : params.getAsJsonArray("todos")) {
-				JsonObject todo = element.getAsJsonObject();
-				text.append("• [").append(string(todo, "status", "pending")).append("] ")
-						.append(string(todo, "content", "")).append('\n');
-			}
-		}
-		return text.toString();
-	}
-
-	@Override
-	public void close() {
-		stop();
+	private static String message(Throwable error, String fallback) {
+		String message = error.getMessage();
+		return message == null || message.isBlank() ? fallback : message;
 	}
 }
