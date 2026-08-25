@@ -139,16 +139,25 @@ public class ChatView extends ViewPart {
 			}
 		});
 		Combo commands = new Combo(row, SWT.DROP_DOWN | SWT.READ_ONLY);
-		commands.setItems("Commands\u2026", "/summarize", "/worktree", "/best-of-n", "/in-cloud");
+		String[] commandItems = { "Commands\u2026", "/summarize", "/worktree", "/best-of-n", "/in-cloud" };
+		commands.setItems(commandItems);
 		commands.select(0);
 		commands.setToolTipText("Insert a Cursor slash command");
 		commands.addListener(SWT.Selection, event -> {
-			if (commands.getSelectionIndex() > 0) {
-				String command = commands.getText();
-				input.insert((input.getText().isBlank() ? "" : "\n") + command + " ");
-				input.setFocus();
-				input.setSelection(input.getCharCount());
-				commands.select(0);
+			int index = commands.getSelectionIndex();
+			if (index > 0) {
+				String command = commandItems[index];
+				commands.getDisplay().asyncExec(() -> {
+					if (!input.isDisposed()) {
+						String prefix = input.getText().isBlank() ? "" : input.getText() + "\n";
+						input.setText(prefix + command + " ");
+						input.setSelection(input.getCharCount());
+						input.setFocus();
+					}
+					if (!commands.isDisposed()) {
+						commands.select(0);
+					}
+				});
 			}
 		});
 	}
