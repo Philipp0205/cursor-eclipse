@@ -33,6 +33,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	private final AtomicBoolean busy = new AtomicBoolean();
 	private volatile String modelConfigId;
 	private volatile boolean canLoadSession;
+	private volatile String workingDirectory;
 	private final WorkspaceTerminals terminals = new WorkspaceTerminals();
 
 	public CursorSession(SessionListener listener) {
@@ -42,6 +43,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	/** Starts the agent and opens a session. Blocking; call from a worker thread. */
 	public void start(CursorAgentLaunch launch) throws IOException {
 		stop();
+		workingDirectory = launch.getWorkingDirectory().getAbsolutePath();
 		AcpConnection acp = AcpConnection.connect(launch, this);
 		connection.set(acp);
 		try {
@@ -60,6 +62,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	/** Starts the agent and loads an existing session without creating a throwaway one. */
 	public void startForResume(CursorAgentLaunch launch, String sessionId) throws IOException {
 		stop();
+		workingDirectory = launch.getWorkingDirectory().getAbsolutePath();
 		AcpConnection acp = AcpConnection.connect(launch, this);
 		connection.set(acp);
 		try {
@@ -98,6 +101,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	/** Starts a new conversation on the running agent. Blocking; call from a worker thread. */
 	public void newSession(String cwd) {
 		AcpConnection acp = require();
+		workingDirectory = cwd;
 		java.io.File directory = new java.io.File(cwd);
 		publishConnected(acp, acp.newSession(cwd, McpConfig.discover(directory)));
 	}
@@ -108,6 +112,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 			throw new IllegalStateException("This Cursor agent does not support resuming ACP sessions");
 		}
 		AcpConnection acp = require();
+		workingDirectory = cwd;
 		java.io.File directory = new java.io.File(cwd);
 		publishConnected(acp, acp.loadSession(sessionId, cwd, McpConfig.discover(directory)));
 	}
@@ -143,6 +148,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	public void stop() {
 		terminals.close();
 		canLoadSession = false;
+		workingDirectory = null;
 		AcpConnection acp = connection.getAndSet(null);
 		if (acp == null) {
 			return;
@@ -240,6 +246,13 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	@Override
 	public JsonObject onTerminalRequest(String method, JsonObject params) {
 		if ("terminal/create".equals(method)) {
+			if (!params.has("cwd") || params.get("cwd").isJsonNull()) {
+				String cwd = workingDirectory;
+				if (cwd == null) {
+					throw new IllegalStateException("No session working directory is available");
+				}
+				params.addProperty("cwd", cwd);
+			}
 			StringBuilder command = new StringBuilder(string(params, "command", "command"));
 			for (JsonElement arg : array(params, "args")) {
 				command.append(' ').append(shellQuote(arg.getAsString()));
