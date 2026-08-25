@@ -14,6 +14,10 @@ public interface SessionListener {
 
 	void onConnected(String sessionId, List<SessionMode> modes, String currentModeId);
 
+	default void onModelsChanged(List<SessionModel> models, String currentModelId) {
+		// optional
+	}
+
 	void onDisconnected();
 
 	/** A chunk of streamed assistant text. */
@@ -30,8 +34,16 @@ public interface SessionListener {
 
 	void onModeChanged(String modeId);
 
+	default void onModelChanged(String modelId) {
+		// optional
+	}
+
 	/** Informational message for the transcript, such as a subagent result. */
 	void onNotice(String message);
+
+	default void onGeneratedImage(String filePath) {
+		onNotice("Image: " + filePath);
+	}
 
 	/** A recoverable failure that should be shown without a modal dialog. */
 	void onError(String message);

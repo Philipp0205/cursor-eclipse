@@ -13,5 +13,7 @@ public class PreferenceInitializer extends AbstractPreferenceInitializer {
 		store.setDefault(PreferenceConstants.AGENT_PATH, "");
 		store.setDefault(PreferenceConstants.AGENT_ARGS, "acp");
 		store.setDefault(PreferenceConstants.API_KEY, "");
+		store.setDefault(PreferenceConstants.DEFAULT_CWD, "");
+		store.setDefault(PreferenceConstants.AUTO_START, false);
 	}
 }

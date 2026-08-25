@@ -91,7 +91,7 @@ public final class AcpConnection implements Closeable {
 		fs.addProperty("writeTextFile", true);
 		JsonObject capabilities = new JsonObject();
 		capabilities.add("fs", fs);
-		capabilities.addProperty("terminal", false);
+		capabilities.addProperty("terminal", true);
 		params.add("clientCapabilities", capabilities);
 		return request("initialize", params).getAsJsonObject();
 	}
@@ -104,13 +104,27 @@ public final class AcpConnection implements Closeable {
 	}
 
 	public JsonObject newSession(String cwd) {
+		return newSession(cwd, new JsonArray());
+	}
+
+	public JsonObject newSession(String cwd, JsonArray mcpServers) {
 		JsonObject params = new JsonObject();
 		params.addProperty("cwd", cwd);
-		params.add("mcpServers", new JsonArray());
+		params.add("mcpServers", mcpServers == null ? new JsonArray() : mcpServers);
 		JsonObject result = request("session/new", params).getAsJsonObject();
 		String id = result.get("sessionId").getAsString();
 		sessionId.set(id);
 		return result;
+	}
+
+	public JsonObject loadSession(String id, String cwd, JsonArray mcpServers) {
+		JsonObject params = new JsonObject();
+		params.addProperty("sessionId", id);
+		params.addProperty("cwd", cwd);
+		params.add("mcpServers", mcpServers == null ? new JsonArray() : mcpServers);
+		JsonElement result = request("session/load", params);
+		sessionId.set(id);
+		return result == null || result.isJsonNull() ? new JsonObject() : result.getAsJsonObject();
 	}
 
 	public JsonObject prompt(String text) {
@@ -143,6 +157,19 @@ public final class AcpConnection implements Closeable {
 		params.addProperty("sessionId", id);
 		params.addProperty("modeId", modeId);
 		JsonElement result = request("session/set_mode", params);
+		return result == null || result.isJsonNull() ? new JsonObject() : result.getAsJsonObject();
+	}
+
+	public JsonObject setConfigOption(String configId, String value) {
+		String id = sessionId.get();
+		if (id == null) {
+			throw new AcpException("No ACP session. Call newSession first.");
+		}
+		JsonObject params = new JsonObject();
+		params.addProperty("sessionId", id);
+		params.addProperty("configId", configId);
+		params.addProperty("value", value);
+		JsonElement result = request("session/set_config_option", params);
 		return result == null || result.isJsonNull() ? new JsonObject() : result.getAsJsonObject();
 	}
 
@@ -281,6 +308,8 @@ public final class AcpConnection implements Closeable {
 				result = listener.onReadTextFile(params);
 			} else if ("fs/write_text_file".equals(method)) {
 				result = listener.onWriteTextFile(params);
+			} else if (method.startsWith("terminal/")) {
+				result = listener.onTerminalRequest(method, params);
 			} else if (method.startsWith("cursor/")) {
 				result = listener.onCursorRequest(method, params);
 			} else {
@@ -415,6 +444,11 @@ public final class AcpConnection implements Closeable {
 		@Override
 		public JsonObject onWriteTextFile(JsonObject params) {
 			return delegate.onWriteTextFile(params);
+		}
+
+		@Override
+		public JsonObject onTerminalRequest(String method, JsonObject params) {
+			return delegate.onTerminalRequest(method, params);
 		}
 
 		@Override

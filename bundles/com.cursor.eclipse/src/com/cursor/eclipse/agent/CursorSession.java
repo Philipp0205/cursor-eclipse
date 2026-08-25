@@ -9,9 +9,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import com.cursor.eclipse.acp.AcpClientListener;
 import com.cursor.eclipse.acp.AcpConnection;
 import com.cursor.eclipse.acp.CursorAgentLaunch;
+import com.cursor.eclipse.acp.McpConfig;
 import com.cursor.eclipse.acp.PermissionDecisions;
 import com.cursor.eclipse.acp.SessionUpdates;
 import com.cursor.eclipse.workspace.WorkspaceFiles;
+import com.cursor.eclipse.workspace.WorkspaceTerminals;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -29,6 +31,9 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	private final AtomicReference<AcpConnection> connection = new AtomicReference<>();
 	private final AtomicBoolean cancelling = new AtomicBoolean();
 	private final AtomicBoolean busy = new AtomicBoolean();
+	private volatile String modelConfigId;
+	private volatile boolean canLoadSession;
+	private final WorkspaceTerminals terminals = new WorkspaceTerminals();
 
 	public CursorSession(SessionListener listener) {
 		this.listener = listener;
@@ -41,9 +46,34 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 		connection.set(acp);
 		try {
 			JsonObject init = acp.initialize();
+			canLoadSession = supportsLoadSession(init);
 			authenticateIfNeeded(acp, init);
-			JsonObject session = acp.newSession(launch.getWorkingDirectory().getAbsolutePath());
+			JsonObject session = acp.newSession(launch.getWorkingDirectory().getAbsolutePath(),
+					McpConfig.discover(launch.getWorkingDirectory()));
 			publishConnected(acp, session);
+		} catch (RuntimeException e) {
+			stop();
+			throw e;
+		}
+	}
+
+	/** Starts the agent and loads an existing session without creating a throwaway one. */
+	public void startForResume(CursorAgentLaunch launch, String sessionId) throws IOException {
+		stop();
+		AcpConnection acp = AcpConnection.connect(launch, this);
+		connection.set(acp);
+		try {
+			JsonObject init = acp.initialize();
+			canLoadSession = supportsLoadSession(init);
+			if (!canLoadSession) {
+				throw new IllegalStateException("This Cursor agent does not support resuming ACP sessions");
+			}
+			authenticateIfNeeded(acp, init);
+			JsonObject session = acp.loadSession(sessionId, launch.getWorkingDirectory().getAbsolutePath(),
+					McpConfig.discover(launch.getWorkingDirectory()));
+			if (session.has("modes") || session.has("configOptions") || session.has("models")) {
+				publishConnected(acp, session);
+			}
 		} catch (RuntimeException e) {
 			stop();
 			throw e;
@@ -66,12 +96,35 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	/** Starts a new conversation on the running agent. Blocking; call from a worker thread. */
 	public void newSession(String cwd) {
 		AcpConnection acp = require();
-		publishConnected(acp, acp.newSession(cwd));
+		java.io.File directory = new java.io.File(cwd);
+		publishConnected(acp, acp.newSession(cwd, McpConfig.discover(directory)));
+	}
+
+	/** Restores an ACP thread when supported by the connected agent. */
+	public void loadSession(String sessionId, String cwd) {
+		if (!canLoadSession) {
+			throw new IllegalStateException("This Cursor agent does not support resuming ACP sessions");
+		}
+		AcpConnection acp = require();
+		java.io.File directory = new java.io.File(cwd);
+		publishConnected(acp, acp.loadSession(sessionId, cwd, McpConfig.discover(directory)));
 	}
 
 	/** Switches agent mode. Blocking; call from a worker thread. */
 	public void setMode(String modeId) {
 		require().setMode(modeId);
+	}
+
+	/** Switches the model advertised by the current ACP session. */
+	public void setModel(String modelId) {
+		String configId = modelConfigId;
+		if (configId == null) {
+			throw new IllegalStateException("The agent did not advertise a model selector");
+		}
+		JsonObject result = require().setConfigOption(configId, modelId);
+		if (result.has("configOptions")) {
+			publishConfigModels(result.getAsJsonArray("configOptions"));
+		}
 	}
 
 	/** Requests cancellation of the current turn. Returns immediately. */
@@ -86,6 +139,8 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 
 	/** Stops the agent process. Safe to call repeatedly. */
 	public void stop() {
+		terminals.close();
+		canLoadSession = false;
 		AcpConnection acp = connection.getAndSet(null);
 		if (acp == null) {
 			return;
@@ -107,6 +162,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	@Override
 	public void close() {
 		stop();
+		terminals.close();
 	}
 
 	// --- ACP callbacks -------------------------------------------------------
@@ -137,6 +193,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 		case "tool_call", "tool_call_update" -> listener.onToolCall(toolCall(update));
 		case "plan" -> listener.onPlan(entries(update.getAsJsonArray("entries")));
 		case "current_mode_update" -> listener.onModeChanged(string(update, "modeId", null));
+		case "config_option_update" -> publishConfigModels(array(update, "configOptions"));
 		default -> {
 			// Other update kinds carry no user-visible content yet.
 		}
@@ -179,6 +236,20 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	}
 
 	@Override
+	public JsonObject onTerminalRequest(String method, JsonObject params) {
+		if ("terminal/create".equals(method)) {
+			String command = string(params, "command", "command");
+			String chosen = listener.askPermission("Run terminal command: " + command,
+					List.of(new PermissionOption("allow-once", "Allow once", "allow_once"),
+							new PermissionOption("reject-once", "Reject", "reject_once")));
+			if (!"allow-once".equals(chosen)) {
+				throw new SecurityException("Terminal command rejected");
+			}
+		}
+		return terminals.handle(method, params);
+	}
+
+	@Override
 	public JsonObject onCursorRequest(String method, JsonObject params) {
 		return switch (method) {
 		case "cursor/ask_question" -> answerQuestions(params);
@@ -192,7 +263,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 		switch (method) {
 		case "cursor/update_todos" -> listener.onTodos(entries(params.getAsJsonArray("todos")));
 		case "cursor/task" -> listener.onNotice("Subagent: " + string(params, "description", "task completed"));
-		case "cursor/generate_image" -> listener.onNotice("Image: " + string(params, "filePath", "generated"));
+		case "cursor/generate_image" -> listener.onGeneratedImage(string(params, "filePath", "generated"));
 		default -> {
 			// Unknown notifications are ignored so new agent features do not break the view.
 		}
@@ -226,6 +297,49 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 			}
 		}
 		listener.onConnected(acp.getSessionId(), List.copyOf(modes), current);
+		publishModels(session);
+	}
+
+	private void publishModels(JsonObject session) {
+		if (session.has("configOptions") && session.get("configOptions").isJsonArray()) {
+			publishConfigModels(session.getAsJsonArray("configOptions"));
+			return;
+		}
+		modelConfigId = null;
+		listener.onModelsChanged(List.of(), null);
+	}
+
+	private void publishConfigModels(JsonArray options) {
+		for (JsonElement element : options) {
+			if (!element.isJsonObject()) {
+				continue;
+			}
+			JsonObject selector = element.getAsJsonObject();
+			if (!"model".equals(string(selector, "category", null))) {
+				continue;
+			}
+			String configId = string(selector, "id", null);
+			if (configId == null) {
+				continue;
+			}
+			modelConfigId = configId;
+			List<SessionModel> models = new ArrayList<>();
+			for (JsonElement candidate : array(selector, "options")) {
+				if (!candidate.isJsonObject()) {
+					continue;
+				}
+				JsonObject model = candidate.getAsJsonObject();
+				String value = string(model, "value", null);
+				if (value != null) {
+					models.add(new SessionModel(configId, value, string(model, "name", value),
+							string(model, "description", "")));
+				}
+			}
+			listener.onModelsChanged(List.copyOf(models), string(selector, "currentValue", null));
+			return;
+		}
+		modelConfigId = null;
+		listener.onModelsChanged(List.of(), null);
 	}
 
 	private JsonObject answerQuestions(JsonObject params) {
@@ -356,6 +470,14 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 		if (first != null) {
 			acp.authenticate(first);
 		}
+	}
+
+	private static boolean supportsLoadSession(JsonObject init) {
+		if (!init.has("agentCapabilities") || !init.get("agentCapabilities").isJsonObject()) {
+			return false;
+		}
+		JsonObject capabilities = init.getAsJsonObject("agentCapabilities");
+		return capabilities.has("loadSession") && capabilities.get("loadSession").getAsBoolean();
 	}
 
 	private AcpConnection require() {

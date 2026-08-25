@@ -10,6 +10,7 @@
 			name="Cursor"
 			icon="icons/cursor-16.png"
 			restorable="true"
+			allowMultiple="true"
 			category="com.cursor.eclipse.category"
 			class="com.cursor.eclipse.chat.ChatView"/>
 	</extension>
@@ -23,8 +24,16 @@
 			name="New Cursor Session"
 			categoryId="com.cursor.eclipse.commands.category"/>
 		<command
+			id="com.cursor.eclipse.commands.newAgent"
+			name="New Parallel Cursor Agent"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
 			id="com.cursor.eclipse.commands.connect"
 			name="Connect Cursor Agent"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.resumeSession"
+			name="Resume Cursor Session"
 			categoryId="com.cursor.eclipse.commands.category"/>
 		<command
 			id="com.cursor.eclipse.commands.disconnect"
@@ -34,6 +43,22 @@
 			id="com.cursor.eclipse.commands.openPreferences"
 			name="Cursor Preferences"
 			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.openReview"
+			name="Review Cursor Changes"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.openPreview"
+			name="Open App Preview"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.openAgentsDashboard"
+			name="Open Cursor Agents Dashboard"
+			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.login"
+			name="Sign in to Cursor"
+			categoryId="com.cursor.eclipse.commands.category"/>
 	</extension>
 
 	<extension point="org.eclipse.ui.handlers">
@@ -41,34 +66,77 @@
 			commandId="com.cursor.eclipse.commands.newSession"
 			class="com.cursor.eclipse.chat.handlers.NewSessionHandler"/>
 		<handler
+			commandId="com.cursor.eclipse.commands.newAgent"
+			class="com.cursor.eclipse.chat.handlers.NewAgentHandler"/>
+		<handler
 			commandId="com.cursor.eclipse.commands.connect"
 			class="com.cursor.eclipse.chat.handlers.ConnectHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.resumeSession"
+			class="com.cursor.eclipse.chat.handlers.ResumeSessionHandler"/>
 		<handler
 			commandId="com.cursor.eclipse.commands.disconnect"
 			class="com.cursor.eclipse.chat.handlers.DisconnectHandler"/>
 		<handler
 			commandId="com.cursor.eclipse.commands.openPreferences"
 			class="com.cursor.eclipse.chat.handlers.OpenPreferencesHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.openReview"
+			class="com.cursor.eclipse.chat.handlers.OpenReviewHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.openPreview"
+			class="com.cursor.eclipse.chat.handlers.OpenPreviewHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.openAgentsDashboard"
+			class="com.cursor.eclipse.chat.handlers.OpenAgentsDashboardHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.login"
+			class="com.cursor.eclipse.chat.handlers.LoginHandler"/>
 	</extension>
 
 	<extension point="org.eclipse.ui.menus">
 		<menuContribution locationURI="toolbar:com.cursor.eclipse.chat.ChatView">
 			<command
-				commandId="com.cursor.eclipse.commands.newSession"
+				commandId="com.cursor.eclipse.commands.newAgent"
 				icon="icons/new-session.png"
+				tooltip="Open a parallel Cursor agent"
+				style="push"/>
+			<command
+				commandId="com.cursor.eclipse.commands.newSession"
 				tooltip="Start a new Cursor session"
 				style="push"/>
 		</menuContribution>
 		<menuContribution locationURI="menu:com.cursor.eclipse.chat.ChatView">
 			<command
+				commandId="com.cursor.eclipse.commands.resumeSession"
+				label="Resume session..."
+				style="push"/>
+			<command
 				commandId="com.cursor.eclipse.commands.connect"
 				label="Connect"
+				style="push"/>
+			<command
+				commandId="com.cursor.eclipse.commands.login"
+				label="Sign in..."
 				style="push"/>
 			<command
 				commandId="com.cursor.eclipse.commands.disconnect"
 				label="Disconnect"
 				style="push"/>
 			<separator name="cursor.separator" visible="true"/>
+			<command
+				commandId="com.cursor.eclipse.commands.openReview"
+				label="Review changes..."
+				style="push"/>
+			<command
+				commandId="com.cursor.eclipse.commands.openPreview"
+				label="Open app preview..."
+				style="push"/>
+			<command
+				commandId="com.cursor.eclipse.commands.openAgentsDashboard"
+				label="Open cloud agents..."
+				style="push"/>
+			<separator name="cursor.tools.separator" visible="true"/>
 			<command
 				commandId="com.cursor.eclipse.commands.openPreferences"
 				label="Preferences"

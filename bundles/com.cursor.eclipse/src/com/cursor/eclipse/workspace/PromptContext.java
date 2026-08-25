@@ -1,9 +1,13 @@
 package com.cursor.eclipse.workspace;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IMarker;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.jface.text.ITextSelection;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.ui.IEditorPart;
@@ -31,6 +35,10 @@ public final class PromptContext {
 	}
 
 	public static JsonArray collect(String prompt, IWorkbenchWindow window) {
+		return collect(prompt, window, List.of());
+	}
+
+	public static JsonArray collect(String prompt, IWorkbenchWindow window, List<IFile> explicitlyAttached) {
 		JsonArray blocks = new JsonArray();
 		blocks.add(text(prompt));
 		IWorkbenchPage page = window == null ? null : window.getActivePage();
@@ -39,6 +47,7 @@ public final class PromptContext {
 		}
 
 		Set<IFile> files = new LinkedHashSet<>();
+		files.addAll(explicitlyAttached);
 		IEditorPart editor = page.getActiveEditor();
 		if (editor != null && editor.getEditorInput() instanceof FileEditorInput input) {
 			files.add(input.getFile());
@@ -71,7 +80,32 @@ public final class PromptContext {
 			}
 			addResource(blocks, file);
 		}
+		addProblems(blocks);
 		return blocks;
+	}
+
+	private static void addProblems(JsonArray blocks) {
+		try {
+			IMarker[] markers = ResourcesPlugin.getWorkspace().getRoot().findMarkers(IMarker.PROBLEM, true,
+					IResource.DEPTH_INFINITE);
+			if (markers.length == 0) {
+				return;
+			}
+			StringBuilder text = new StringBuilder("Current Eclipse problem markers:\n");
+			int count = 0;
+			for (IMarker marker : markers) {
+				if (count++ >= 25) {
+					text.append("... additional markers omitted ...\n");
+					break;
+				}
+				text.append(marker.getResource().getFullPath()).append(':')
+						.append(marker.getAttribute(IMarker.LINE_NUMBER, 0)).append(": ")
+						.append(marker.getAttribute(IMarker.MESSAGE, "Problem")).append('\n');
+			}
+			blocks.add(text(text.toString()));
+		} catch (Exception ignored) {
+			// Markers are useful context, but never a reason to reject a prompt.
+		}
 	}
 
 	private static void addSelection(JsonArray blocks, IEditorPart editor, IFile file) {
