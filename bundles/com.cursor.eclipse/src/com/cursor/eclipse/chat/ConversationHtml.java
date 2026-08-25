@@ -1,0 +1,83 @@
+package com.cursor.eclipse.chat;
+
+import com.cursor.eclipse.agent.ToolCall;
+
+/** Builds the conversation blocks rendered inside the chat browser. */
+public final class ConversationHtml {
+
+	private ConversationHtml() {
+	}
+
+	public static String message(String id, String role, String markdown) {
+		String label = switch (role) {
+		case "user" -> "You";
+		case "system" -> "Eclipse";
+		default -> "Cursor";
+		};
+		return "<section id=\"" + id(id) + "\" class=\"message " + cssRole(role) + "\">"
+				+ "<div class=\"role\">" + label + "</div>"
+				+ "<div class=\"content\">" + MarkdownHtml.render(markdown) + "</div></section>";
+	}
+
+	public static String thought(String id, String markdown) {
+		return "<details id=\"" + id(id) + "\" class=\"thinking\"><summary>Thinking</summary>"
+				+ "<div class=\"thinking-body\">" + MarkdownHtml.render(markdown) + "</div></details>";
+	}
+
+	public static String notice(String id, String text) {
+		return "<div id=\"" + id(id) + "\" class=\"notice\">" + MarkdownHtml.escape(text) + "</div>";
+	}
+
+	public static String error(String id, String text) {
+		return "<div id=\"" + id(id) + "\" class=\"notice error\">" + MarkdownHtml.escape(text) + "</div>";
+	}
+
+	public static String activity(String id, String label) {
+		return "<div id=\"" + id(id) + "\" class=\"activity\">" + MarkdownHtml.escape(label) + "</div>";
+	}
+
+	public static String tool(String id, ToolCall call) {
+		String status = call.status() == null ? "pending" : call.status();
+		String title = call.title() == null ? call.id() : call.title();
+		return "<div id=\"" + id(id) + "\" class=\"tool status-" + id(status) + "\">"
+				+ "<span class=\"tool-icon\" aria-hidden=\"true\">" + icon(call.kind(), status) + "</span>"
+				+ "<span class=\"tool-title\">" + MarkdownHtml.escape(title) + "</span>"
+				+ (call.detail() == null ? ""
+						: "<span class=\"tool-detail\">" + MarkdownHtml.escape(call.detail()) + "</span>")
+				+ "<span class=\"tool-status\">" + MarkdownHtml.escape(status) + "</span></div>";
+	}
+
+	private static String icon(String kind, String status) {
+		if ("failed".equals(status)) {
+			return "&#10007;";
+		}
+		if ("completed".equals(status)) {
+			return "&#10003;";
+		}
+		if (kind == null) {
+			return "&#9679;";
+		}
+		return switch (kind) {
+		case "read" -> "&#128214;";
+		case "edit" -> "&#9998;";
+		case "delete" -> "&#128465;";
+		case "search" -> "&#128269;";
+		case "execute" -> "&#9654;";
+		case "think" -> "&#128173;";
+		case "fetch" -> "&#127760;";
+		default -> "&#9679;";
+		};
+	}
+
+	private static String cssRole(String role) {
+		return switch (role) {
+		case "user" -> "user";
+		case "system" -> "system";
+		default -> "assistant";
+		};
+	}
+
+	public static String id(String value) {
+		return value == null ? "block" : value.replaceAll("[^A-Za-z0-9_-]", "_");
+	}
+}

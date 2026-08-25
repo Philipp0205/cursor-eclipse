@@ -1,0 +1,139 @@
+name: Build and publish p2 update site
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    # The publish job commits back to main. Ignoring the published site keeps
+    # that commit from starting another run.
+    paths-ignore:
+      - "p2/**"
+      - "index.html"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Keep in step with tycho.version in the root pom.
+  TYCHO_VERSION: "4.0.13"
+  ECLIPSE_RELEASE: https://download.eclipse.org/releases/2025-09/
+  FEATURE_IU: com.cursor.eclipse.feature.feature.group
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build and verify p2 repository
+        run: mvn --batch-mode clean verify
+
+      # `verify` builds the repository but never proves the feature can actually
+      # be installed. Resolving it against a real Eclipse release catches missing
+      # or unsatisfiable bundle requirements before anyone adds the update site.
+      - name: Resolve feature installation
+        run: >-
+          mvn --batch-mode --non-recursive
+          org.eclipse.tycho:tycho-p2-director-plugin:${{ env.TYCHO_VERSION }}:director
+          -Ddestination=${{ runner.temp }}/p2-verify
+          -Drepositories=file:${{ github.workspace }}/releng/com.cursor.eclipse.repository/target/repository/,${{ env.ECLIPSE_RELEASE }}
+          -DinstallIUs=${{ env.FEATURE_IU }}
+          -DverifyOnly=true
+          -Dprofileproperties=org.eclipse.update.install.features=true
+
+      - name: Upload p2 repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-update-site
+          path: releng/com.cursor.eclipse.repository/target/repository
+          if-no-files-found: error
+
+  # GitHub Pages serves this repository's default branch, so the published
+  # update site is the committed p2/ directory rather than a Pages artifact.
+  publish:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # The merge step reads the published site, so it has to be a valid p2
+      # repository even on the very first run.
+      - name: Ensure a published site exists
+        run: |
+          if [ ! -f p2/content.jar ] && [ ! -f p2/content.xml ]; then
+            mkdir -p p2
+            cat > p2/content.xml <<'XML'
+          <?xml version='1.0' encoding='UTF-8'?>
+          <?metadataRepository version='1.2.0'?>
+          <repository name='Cursor for Eclipse' type='org.eclipse.equinox.internal.p2.metadata.repository.LocalMetadataRepository' version='1.2.0'>
+            <properties size='1'><property name='p2.compressed' value='false'/></properties>
+            <units size='0'/>
+          </repository>
+          XML
+            cat > p2/artifacts.xml <<'XML'
+          <?xml version='1.0' encoding='UTF-8'?>
+          <?artifactRepository version='1.1.0'?>
+          <repository name='Cursor for Eclipse' type='org.eclipse.equinox.p2.artifact.repository.simpleRepository' version='1.1.0'>
+            <properties size='1'><property name='p2.compressed' value='false'/></properties>
+            <mappings size='3'>
+              <rule filter='(&amp; (classifier=osgi.bundle))' output='${repoUrl}/plugins/${id}_${version}.jar'/>
+              <rule filter='(&amp; (classifier=binary))' output='${repoUrl}/binary/${id}_${version}'/>
+              <rule filter='(&amp; (classifier=org.eclipse.update.feature))' output='${repoUrl}/features/${id}_${version}.jar'/>
+            </mappings>
+            <artifacts size='0'/>
+          </repository>
+          XML
+          fi
+
+      - name: Build the update site and merge it with the published one
+        run: mvn --batch-mode clean verify -Ppublish-site
+
+      - name: Refresh the published update site
+        # merged-site already contains every previously published version, so
+        # replacing p2/ wholesale does not drop anything a client may request.
+        run: |
+          rm -rf p2
+          mkdir p2
+          cp -a releng/com.cursor.eclipse.repository/target/merged-site/. p2/
+          # Pages has no directory listing, so without this the update site URL
+          # answers 404 in a browser even though Eclipse resolves it fine.
+          cp releng/p2-index.html p2/index.html
+
+      - name: Commit the published update site
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A p2
+          if git diff --cached --quiet; then
+            echo "Update site is already up to date."
+          else
+            git commit -m "Publish p2 update site from ${GITHUB_REF_NAME} [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### Update site published"
+            echo
+            echo "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/p2/"
+          } >> "$GITHUB_STEP_SUMMARY"

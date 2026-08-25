@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>__CSS__</style>
+</head>
+<body>
+  <section id="welcome" class="welcome">
+    <h1>Cursor</h1>
+    <p class="lead">Ask Cursor to explain or change code in this workspace. Tool calls and file
+      edits are approved by you and applied through Eclipse.</p>
+  </section>
+  <main id="conversation" role="log" aria-live="polite" aria-label="Cursor conversation"></main>
+  <button id="jump" type="button" hidden aria-label="Scroll to latest message">&#8595; Latest</button>
+  <script>
+    var pinned = true;
+    var root = document.getElementById('conversation');
+    var welcome = document.getElementById('welcome');
+    var jump = document.getElementById('jump');
+
+    function height() {
+      return Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+    }
+    function atBottom() { return innerHeight + scrollY >= height() - 1; }
+    function updateWelcome() { welcome.hidden = root.children.length > 0; }
+    function updateJump() { jump.hidden = pinned || atBottom(); }
+
+    addEventListener('scroll', function () {
+      pinned = innerHeight + scrollY >= height() - 64;
+      updateJump();
+    });
+    jump.addEventListener('click', function () {
+      pinned = true;
+      scrollTo(0, height());
+      updateJump();
+    });
+
+    function put(id, html) {
+      var node = document.getElementById(id);
+      if (!node) {
+        node = document.createElement('div');
+        node.id = id;
+        root.appendChild(node);
+      }
+      node.outerHTML = html;
+      updateWelcome();
+      if (pinned) scrollTo(0, height());
+      updateJump();
+    }
+    function removeBlock(id) {
+      var node = document.getElementById(id);
+      if (node) node.remove();
+      updateWelcome();
+      updateJump();
+    }
+    function reset() {
+      root.innerHTML = '';
+      pinned = true;
+      updateWelcome();
+      updateJump();
+    }
+    updateWelcome();
+  </script>
+</body>
+</html>

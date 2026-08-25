@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.cursor.eclipse</groupId>
+		<artifactId>cursor-eclipse</artifactId>
+		<version>0.1.0-SNAPSHOT</version>
+		<relativePath>..</relativePath>
+	</parent>
+	<artifactId>cursor-eclipse-tycho</artifactId>
+	<packaging>pom</packaging>
+	<name>Cursor Eclipse Tycho build</name>
+
+	<modules>
+		<module>cursor-eclipse-target</module>
+		<module>../bundles/com.cursor.eclipse</module>
+		<module>../features/com.cursor.eclipse.feature</module>
+		<module>../releng/com.cursor.eclipse.repository</module>
+		<module>../tests/com.cursor.eclipse.tests</module>
+	</modules>
+
+	<properties>
+		<tycho.scmUrl>scm:git:https://github.com/Philipp0205/cursor-eclipse.git</tycho.scmUrl>
+	</properties>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.eclipse.tycho</groupId>
+				<artifactId>tycho-maven-plugin</artifactId>
+				<version>${tycho.version}</version>
+				<extensions>true</extensions>
+			</plugin>
+			<plugin>
+				<groupId>org.eclipse.tycho</groupId>
+				<artifactId>target-platform-configuration</artifactId>
+				<version>${tycho.version}</version>
+				<configuration>
+					<target>
+						<artifact>
+							<groupId>com.cursor.eclipse</groupId>
+							<artifactId>cursor-eclipse-target</artifactId>
+							<version>${project.version}</version>
+						</artifact>
+					</target>
+					<executionEnvironment>JavaSE-21</executionEnvironment>
+					<environments>
+						<environment>
+							<os>linux</os>
+							<ws>gtk</ws>
+							<arch>x86_64</arch>
+						</environment>
+						<environment>
+							<os>win32</os>
+							<ws>win32</ws>
+							<arch>x86_64</arch>
+						</environment>
+						<environment>
+							<os>macosx</os>
+							<ws>cocoa</ws>
+							<arch>x86_64</arch>
+						</environment>
+						<environment>
+							<os>macosx</os>
+							<ws>cocoa</ws>
+							<arch>aarch64</arch>
+						</environment>
+					</environments>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>
