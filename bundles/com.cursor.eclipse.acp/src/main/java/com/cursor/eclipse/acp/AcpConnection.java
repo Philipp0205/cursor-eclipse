@@ -122,7 +122,7 @@ public final class AcpConnection implements Closeable {
 		params.addProperty("sessionId", id);
 		params.addProperty("cwd", cwd);
 		params.add("mcpServers", mcpServers == null ? new JsonArray() : mcpServers);
-		JsonElement result = request("session/load", params);
+		JsonElement result = request("session/load", params, 10, TimeUnit.MINUTES);
 		sessionId.set(id);
 		return result == null || result.isJsonNull() ? new JsonObject() : result.getAsJsonObject();
 	}

@@ -73,6 +73,8 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 					McpConfig.discover(launch.getWorkingDirectory()));
 			if (session.has("modes") || session.has("configOptions") || session.has("models")) {
 				publishConnected(acp, session);
+			} else {
+				listener.onConnected(sessionId, List.of(), null);
 			}
 		} catch (RuntimeException e) {
 			stop();
@@ -238,8 +240,12 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	@Override
 	public JsonObject onTerminalRequest(String method, JsonObject params) {
 		if ("terminal/create".equals(method)) {
-			String command = string(params, "command", "command");
-			String chosen = listener.askPermission("Run terminal command: " + command,
+			StringBuilder command = new StringBuilder(string(params, "command", "command"));
+			for (JsonElement arg : array(params, "args")) {
+				command.append(' ').append(shellQuote(arg.getAsString()));
+			}
+			String cwd = string(params, "cwd", "");
+			String chosen = listener.askPermission("Run terminal command in " + cwd + ":\n" + command,
 					List.of(new PermissionOption("allow-once", "Allow once", "allow_once"),
 							new PermissionOption("reject-once", "Reject", "reject_once")));
 			if (!"allow-once".equals(chosen)) {
@@ -247,6 +253,13 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 			}
 		}
 		return terminals.handle(method, params);
+	}
+
+	private static String shellQuote(String value) {
+		if (value.matches("[A-Za-z0-9_./:@%+=,-]+")) {
+			return value;
+		}
+		return "'" + value.replace("'", "'\"'\"'") + "'";
 	}
 
 	@Override
