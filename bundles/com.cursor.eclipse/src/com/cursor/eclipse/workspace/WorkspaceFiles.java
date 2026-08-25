@@ -24,6 +24,7 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.ui.PlatformUI;
 
 /**
  * Workspace-confined file access for ACP.
@@ -155,15 +156,27 @@ public final class WorkspaceFiles {
 	}
 
 	private static void onDisplayThread(Runnable runnable) {
-		Display display = Display.getDefault();
-		if (display.isDisposed()) {
+		Display display = Display.getCurrent();
+		if (display != null) {
+			if (!display.isDisposed()) {
+				runnable.run();
+			}
 			return;
 		}
-		if (display.getThread() == Thread.currentThread()) {
+		// Display.getDefault() creates a GTK Display when none exists, which
+		// fails in headless CI (gtk_init_check / "No more handles") and would
+		// pin this worker as the UI thread. Only marshal when the workbench
+		// already owns a display, as ACP writes do in a running Eclipse.
+		if (!PlatformUI.isWorkbenchRunning()) {
 			runnable.run();
-		} else {
-			display.syncExec(runnable);
+			return;
 		}
+		display = PlatformUI.getWorkbench().getDisplay();
+		if (display == null || display.isDisposed()) {
+			runnable.run();
+			return;
+		}
+		display.syncExec(runnable);
 	}
 
 	private static IPath location(Path path) {
