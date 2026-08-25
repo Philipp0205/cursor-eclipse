@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Builds the plugin and serves the update site on localhost so it can be added
-# to Eclipse as a normal HTTP update site.
+# Builds the plugin and serves the repository root so the update site is
+# reachable at the same /p2/ path GitHub Pages publishes.
 #
 # Usage: test/serve-update-site.sh [port]
 
@@ -9,30 +9,25 @@ set -euo pipefail
 
 PORT="${1:-8080}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SITE="${SITE_DIR:-/tmp/cursor-eclipse-site}"
 
-VERSION="$(sed -n 's/.*<version>\(.*\)-SNAPSHOT<\/version>.*/\1/p' "$ROOT/pom.xml" | head -1)"
-if [ -z "$VERSION" ]; then
-	VERSION="0.0.0"
-fi
+echo "Building ..."
+(cd "$ROOT" && mvn -B -q clean verify -Ppublish-site)
 
-echo "Building $VERSION ..."
-(cd "$ROOT" && mvn -B -q verify)
-
-"$ROOT/releng/publish-site.sh" "$VERSION" \
-	"$ROOT/releng/com.cursor.eclipse.repository/target/repository" "$SITE"
+rm -rf "$ROOT/p2"
+mkdir "$ROOT/p2"
+cp -a "$ROOT/releng/com.cursor.eclipse.repository/target/merged-site/." "$ROOT/p2/"
 
 cat <<EOF
 
-Update site built at $SITE
+Update site built at $ROOT/p2
 
 Easiest: Help > Install New Software... > Add... > Local... and pick
 
-    $SITE
+    $ROOT/p2
 
 Or use it as a URL:
 
-    http://localhost:$PORT/
+    http://localhost:$PORT/p2/
 
 Eclipse redirects http:// update sites to https:// (CVE-2021-41033), so for the
 URL form add this line to eclipse.ini and restart Eclipse:
@@ -43,5 +38,5 @@ Press Ctrl+C to stop serving.
 
 EOF
 
-cd "$SITE"
+cd "$ROOT"
 exec python3 -m http.server "$PORT" --bind 127.0.0.1

@@ -10,3 +10,7 @@ bin/
 *.class
 .polyglot.*
 .tycho-consumer-pom.xml
+
+# p2/ is the published update site served by GitHub Pages, so its jars are
+# tracked on purpose.
+!p2/**

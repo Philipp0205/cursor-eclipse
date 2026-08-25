@@ -88,12 +88,11 @@ containing `slow` streams until you press **Stop**.
 ### From the hosted update site
 
 ```
-https://philipp0205.github.io/cursor-eclipse/
+https://philipp0205.github.io/cursor-eclipse/p2/
 ```
 
 **Help → Install New Software…**, paste that URL, select **Cursor**, finish, and
-restart. The site is a p2 composite repository, so this URL keeps working as new
-versions are published.
+restart.
 
 ### From a local build
 
@@ -104,23 +103,34 @@ mvn verify
 Then **Help → Install New Software… → Add… → Local…** and choose
 `releng/com.cursor.eclipse.repository/target/repository`.
 
-`test/serve-update-site.sh [port]` builds the site and serves it on
-`http://localhost:8080/` instead. Eclipse redirects `http://` update sites to
+`test/serve-update-site.sh [port]` builds the site and serves it at
+`http://localhost:8080/p2/` instead. Eclipse redirects `http://` update sites to
 `https://` since CVE-2021-41033, so add `-Dp2.httpRule=allow` to `eclipse.ini`
-before using the URL form. Installing from the local folder needs no such flag.
+before using the URL form. Installing from a local folder needs no such flag.
 
 ### From a CI build
 
-Every `build` workflow run uploads a `cursor-eclipse-update-site` artifact.
-Download it, unzip, and install from the folder.
+Every workflow run uploads a `p2-update-site` artifact. Download it, unzip, and
+install from the folder.
 
 ## Publishing
 
-`releng/publish-site.sh <version> <built-repository> <site-dir>` adds a build to
-a composite site, regenerating `compositeArtifacts.xml`, `compositeContent.xml`,
-`p2.index`, and a landing page.
+GitHub Pages serves this repository's default branch, so the update site is the
+committed `p2/` directory rather than a Pages artifact. Enable it once under
+**Settings → Pages → Deploy from a branch → `main` / root**.
 
-`.github/workflows/release.yml` runs it on `v*` tags or on demand: it builds,
-adds the version under `releases/<version>/`, and pushes the result to the
-`gh-pages` branch. Enable **Settings → Pages → Deploy from a branch → gh-pages**
-once, and the URL above stays valid for every later release.
+`.github/workflows/p2-site.yml` builds and verifies every push and pull request,
+including a p2 director run that proves the feature actually resolves against a
+real Eclipse release. On pushes to `main` and on `v*` tags it then rebuilds with
+the `publish-site` profile, which mirrors the already published `p2/` together
+with the new build into `target/merged-site`, and commits the result back to
+`p2/`.
+
+Merging rather than replacing matters: p2 clients cache repository metadata and
+keep requesting the exact version they first resolved, so removing an old
+version breaks their install instead of upgrading it. The trade-off is that
+`p2/` grows by one feature and one bundle jar per published build; publish only
+on tags if that becomes unwelcome.
+
+The publish commit touches only `p2/`, which the workflow's `paths-ignore`
+excludes, so publishing never retriggers the workflow.
