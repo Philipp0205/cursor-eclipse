@@ -88,6 +88,13 @@ public class ChatView extends ViewPart {
 		if (sessionRoot == null) {
 			sessionRoot = SessionLaunchRegistry.get(getViewSite().getSecondaryId());
 		}
+		if (sessionRoot == null) {
+			sessionRoot = LaunchFactory.workingDirectory();
+		}
+		String secondaryId = getViewSite().getSecondaryId();
+		String viewName = secondaryId == null ? "Chat" : readableName(secondaryId);
+		setPartName(secondaryId == null ? "Cursor Chat" : "Cursor: " + viewName);
+		SessionLaunchRegistry.register(secondaryId, viewName, sessionRoot);
 		refreshState("Disconnected");
 		if (CursorPlugin.getDefault().getPreferenceStore().getBoolean(PreferenceConstants.AUTO_START)) {
 			controller.connect(workingDirectory());
@@ -349,6 +356,9 @@ public class ChatView extends ViewPart {
 
 	/** Updates the status text and the enablement of every stateful control. */
 	void refreshState(String message) {
+		if (message != null && getViewSite() != null) {
+			SessionLaunchRegistry.update(getViewSite().getSecondaryId(), null, message);
+		}
 		ui(() -> {
 			if (message != null) {
 				status.setText(message);
@@ -406,6 +416,10 @@ public class ChatView extends ViewPart {
 		selectModel(currentModelId);
 	}
 
+	void setSessionId(String sessionId) {
+		SessionLaunchRegistry.update(getViewSite().getSecondaryId(), sessionId, "Ready");
+	}
+
 	void selectModel(String modelId) {
 		if (modelCombo.isDisposed() || models.isEmpty()) {
 			return;
@@ -450,6 +464,12 @@ public class ChatView extends ViewPart {
 
 	private File workingDirectory() {
 		return sessionRoot == null ? LaunchFactory.workingDirectory() : sessionRoot;
+	}
+
+	private static String readableName(String secondaryId) {
+		String withoutTimestamp = secondaryId.replaceFirst("-\\d{10,}$", "");
+		String readable = withoutTimestamp.replace('-', ' ').trim();
+		return readable.isBlank() ? "Agent" : Character.toUpperCase(readable.charAt(0)) + readable.substring(1);
 	}
 
 	public void disconnect() {
