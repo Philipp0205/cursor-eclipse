@@ -13,6 +13,23 @@
 			allowMultiple="true"
 			category="com.cursor.eclipse.category"
 			class="com.cursor.eclipse.chat.ChatView"/>
+		<view
+			id="com.cursor.eclipse.agents.AgentsView"
+			name="Cursor Agents"
+			icon="icons/cursor-16.png"
+			restorable="true"
+			allowMultiple="false"
+			category="com.cursor.eclipse.category"
+			class="com.cursor.eclipse.agents.AgentsView"/>
+	</extension>
+
+	<extension point="org.eclipse.ui.perspectives">
+		<perspective
+			id="com.cursor.eclipse.perspective"
+			name="Cursor"
+			icon="icons/cursor-16.png"
+			class="com.cursor.eclipse.perspective.CursorPerspective"
+			fixed="false"/>
 	</extension>
 
 	<extension point="org.eclipse.ui.commands">
@@ -140,6 +157,13 @@
 			<command
 				commandId="com.cursor.eclipse.commands.openPreferences"
 				label="Preferences"
+				style="push"/>
+		</menuContribution>
+		<menuContribution locationURI="toolbar:com.cursor.eclipse.agents.AgentsView">
+			<command
+				commandId="com.cursor.eclipse.commands.newAgent"
+				icon="icons/new-session.png"
+				tooltip="Open a new Cursor agent"
 				style="push"/>
 		</menuContribution>
 	</extension>

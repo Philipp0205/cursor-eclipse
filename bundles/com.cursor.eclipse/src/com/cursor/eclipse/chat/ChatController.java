@@ -203,6 +203,7 @@ final class ChatController implements SessionListener {
 	@Override
 	public void onConnected(String sessionId, List<SessionMode> modes, String currentModeId) {
 		view.ui(() -> {
+			view.setSessionId(sessionId);
 			view.setModes(modes, currentModeId);
 			view.refreshState("Ready");
 		});

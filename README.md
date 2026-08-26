@@ -62,7 +62,8 @@ In Eclipse: **Help → Install New Software… → Add…** and choose that fold
 
 ## Use
 
-1. **Window → Show View → Other… → Cursor → Cursor**
+1. Open **Window → Perspective → Open Perspective → Other… → Cursor**. The
+   Cursor Agents view is placed on the left and the chat on the right.
 2. Type a prompt and press Enter; the agent starts automatically. Shift+Enter
    inserts a newline and Alt+Up/Down walks prompt history.
 3. Choose Agent, Plan, or Ask mode in the dropdown once connected.
@@ -71,10 +72,12 @@ In Eclipse: **Help → Install New Software… → Add…** and choose that fold
 5. The view toolbar starts a new session; the view menu has Connect, Disconnect,
    Resume, Review changes, Open app preview, Cloud Agents, and Preferences.
 
-Use **New Parallel Cursor Agent** in the view toolbar to open another independent
-agent. Eclipse asks whether its edits should be isolated in a Git worktree. Each
-agent runs in its own normal Eclipse view instance, so views can be tabbed or
-split using standard workbench controls.
+The **Cursor Agents** view groups open chats by working folder and shows each
+session's live state. Double-click a session to bring its chat forward. Use its
+toolbar button (or **New Parallel Cursor Agent** in the chat toolbar) to open
+another independent agent. Eclipse asks whether its edits should be isolated in
+a Git worktree. Each agent runs in its own normal Eclipse view instance, so
+views can be tabbed or split using standard workbench controls.
 
 File access requested over ACP is restricted to the current Eclipse workspace.
 The agent may still use its own filesystem tools according to Cursor's permission
