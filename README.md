@@ -22,8 +22,8 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 - Active editor, text selection, problem markers, selected resources, and explicit file attachments
 - Cursor questions, plan approval, todos, subagent, and generated-image notifications
 - Project/user `.cursor/mcp.json` discovery and ACP session configuration
-- Resumable sessions and multiple parallel agent views, with optional isolated Git worktrees
-- An agents view over open chats, existing Cursor CLI chats, and the account's cloud agents
+- Restorable sessions and composer-driven parallel agent views, with optional isolated Git worktrees
+- A searchable agents view over open chats, existing Cursor CLI chats, and status-grouped cloud agents
 - Eclipse Git Staging review, embedded app preview, Cursor cloud dashboard, and `&` cloud handoff
 
 ## Prerequisites
@@ -89,11 +89,18 @@ while it is visible, or on demand with its refresh button:
   **Preferences → Cursor** or in `CURSOR_API_KEY`, because `agent login` alone
   is not a REST credential.
 
-Use the view's toolbar button (or **New Parallel Cursor Agent** in the chat
-toolbar) to open another independent agent. Eclipse asks whether its edits
-should be isolated in a Git worktree. Each agent runs in its own normal Eclipse
-view instance, so views can be tabbed or split using standard workbench
-controls.
+Use the view's toolbar button, **Ctrl+Alt+N**, or **New Parallel Cursor Agent**
+in the chat toolbar to open the New Agent composer. It accepts a name, initial
+task, local/cloud target, and a parallel-agent count from 1–8. Local agents can
+each use an isolated Git worktree; the worktrees are created from the actual
+repository root beneath the Eclipse workspace. Each agent runs in its own
+normal Eclipse view instance, so views can be tabbed or split using standard
+workbench controls.
+
+The search field filters every group by name, folder, status, repository, or
+ID. **Ctrl+Alt+J** opens the Agents view and focuses that field. Eclipse saves
+each open view's folder and ACP session ID, then resumes its conversation when
+the workbench is reopened.
 
 File access requested over ACP is restricted to the current Eclipse workspace.
 The agent may still use its own filesystem tools according to Cursor's permission
