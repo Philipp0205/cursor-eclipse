@@ -15,8 +15,9 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 ## Features
 
 - Streaming Cursor Agent chat with new sessions in the same CLI process
-- Agent, Plan, and Ask modes plus model selection when advertised by Cursor
-- Tool progress and explicit permission choices
+- Agent, Plan, and Ask modes plus model selection when advertised by Cursor;
+  Cloud Agent follow-ups support Agent and Plan
+- Tool progress, commands, command output, file-change details, and explicit permission choices
 - Workspace-confined ACP reads/writes and IDE-managed terminal commands
 - Dirty editor contents included in reads; writes preserve local history and run builders
 - Active editor, text selection, problem markers, selected resources, and explicit file attachments
@@ -25,6 +26,7 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 - Restorable sessions and composer-driven parallel agent views, with optional isolated Git worktrees
 - A searchable agents view over open chats, existing Cursor CLI chats, and repository-grouped cloud agents
 - Eclipse Git Staging review, embedded app preview, Cursor cloud dashboard, and `&` cloud handoff
+- Serial follow-up queue for a Cloud Agent while its current run is working
 
 ## Prerequisites
 
@@ -96,6 +98,10 @@ while it is visible, or on demand with its refresh button:
 Running, completed, failed, and disconnected sessions have a status symbol
 before their title. Right-click a local repository folder to start an agent in
 that folder, or a cloud repository to create a Cloud Agent for that repository.
+While a Cloud Agent is working, type another message and press **Queue** to run
+it next. The commands menu includes `/multitask` for local agents; Cursor's
+public Cloud Agent API currently supports serial Agent and Plan runs, not cloud
+multitask mode or changing the model of an existing conversation.
 
 Use the view's toolbar button, **Ctrl+Alt+N**, or **New Parallel Cursor Agent**
 in the chat toolbar to open the New Agent composer. It accepts a name, initial

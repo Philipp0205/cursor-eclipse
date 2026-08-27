@@ -190,7 +190,8 @@ public class ChatView extends ViewPart {
 			}
 		});
 		Combo commands = new Combo(row, SWT.DROP_DOWN | SWT.READ_ONLY);
-		String[] commandItems = { "Commands\u2026", "/summarize", "/worktree", "/best-of-n", "/in-cloud" };
+		String[] commandItems = { "Commands\u2026", "/summarize", "/worktree", "/best-of-n", "/multitask",
+				"/in-cloud" };
 		commands.setItems(commandItems);
 		commands.select(0);
 		commands.setToolTipText("Insert a Cursor slash command");
@@ -242,7 +243,12 @@ public class ChatView extends ViewPart {
 				navigateHistory(1);
 			}
 		});
-		input.addModifyListener(event -> growInput());
+		input.addModifyListener(event -> {
+			growInput();
+			if (controller != null) {
+				refreshState();
+			}
+		});
 	}
 
 	private void createStatusRow(Composite parent) {
@@ -290,7 +296,11 @@ public class ChatView extends ViewPart {
 		send.setText("Send");
 		send.addListener(SWT.Selection, event -> {
 			if (controller.isBusy()) {
-				controller.cancel();
+				if (controller.isCloud() && !input.getText().isBlank()) {
+					sendPrompt(false);
+				} else {
+					controller.cancel();
+				}
 			} else {
 				sendPrompt(false);
 			}
@@ -299,7 +309,7 @@ public class ChatView extends ViewPart {
 
 	private void sendPrompt(boolean inCloud) {
 		String text = input.getText().trim();
-		if (text.isEmpty() || controller.isBusy()) {
+		if (text.isEmpty() || controller.isBusy() && !controller.isCloud()) {
 			return;
 		}
 		// Editor, selection, and project state must be read on the SWT thread,
@@ -411,11 +421,11 @@ public class ChatView extends ViewPart {
 				status.setToolTipText(message);
 			}
 			boolean busy = controller.isBusy();
-			send.setText(busy ? "Stop" : "Send");
+			send.setText(busy ? controller.isCloud() && !input.getText().isBlank() ? "Queue" : "Stop" : "Send");
 			send.setEnabled(busy || !input.getText().isBlank() || controller.isConnected());
 			cloud.setEnabled(!controller.isCloud() && !busy && !input.getText().isBlank());
-			modeCombo.setEnabled(!busy && controller.isConnected() && !modes.isEmpty());
-			modelCombo.setEnabled(!busy && controller.isConnected() && !models.isEmpty());
+			modeCombo.setEnabled((!busy || controller.isCloud()) && controller.isConnected() && !modes.isEmpty());
+			modelCombo.setEnabled(!controller.isCloud() && !busy && controller.isConnected() && !models.isEmpty());
 			statusRow.layout(true, true);
 		});
 	}

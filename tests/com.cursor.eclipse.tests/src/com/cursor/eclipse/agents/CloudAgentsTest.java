@@ -101,6 +101,24 @@ public class CloudAgentsTest {
 	}
 
 	@Test
+	public void readsCloudToolCommandsAndResults() {
+		CloudToolCall call = CloudAgents.parseToolCall("""
+				{
+				  "callId":"call-1",
+				  "name":"run_terminal_cmd",
+				  "status":"completed",
+				  "args":{"command":"mvn test"},
+				  "result":{"success":{"output":"BUILD SUCCESS"}}
+				}
+				""");
+
+		assertEquals("call-1", call.id());
+		assertEquals("execute", call.kind());
+		assertTrue(call.detail().contains("mvn test"));
+		assertTrue(call.detail().contains("BUILD SUCCESS"));
+	}
+
+	@Test
 	public void fillsInMissingFields() {
 		List<CloudAgent> agents = CloudAgents.parse("{\"items\":[{\"id\":\"bc-3\"},{\"name\":\"no id\"}]}");
 

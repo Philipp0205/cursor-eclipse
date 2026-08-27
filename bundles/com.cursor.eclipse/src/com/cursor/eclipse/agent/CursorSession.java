@@ -3,6 +3,8 @@ package com.cursor.eclipse.agent;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -27,6 +29,8 @@ import com.google.gson.JsonObject;
  */
 public final class CursorSession implements AutoCloseable, AcpClientListener {
 
+	private static final int MAX_TOOL_DETAIL = 128 * 1024;
+
 	private final SessionListener listener;
 	private final AtomicReference<AcpConnection> connection = new AtomicReference<>();
 	private final AtomicBoolean cancelling = new AtomicBoolean();
@@ -35,6 +39,7 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 	private volatile boolean canLoadSession;
 	private volatile String workingDirectory;
 	private final WorkspaceTerminals terminals = new WorkspaceTerminals();
+	private final Map<String, String> terminalCommands = new ConcurrentHashMap<>();
 
 	public CursorSession(SessionListener listener) {
 		this.listener = listener;
@@ -271,7 +276,16 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 				throw new SecurityException("Terminal command rejected");
 			}
 		}
-		return terminals.handle(method, params);
+		JsonObject result = terminals.handle(method, params);
+		if ("terminal/create".equals(method) && result.has("terminalId")) {
+			String id = result.get("terminalId").getAsString();
+			StringBuilder command = new StringBuilder(string(params, "command", "command"));
+			for (JsonElement arg : array(params, "args")) {
+				command.append(' ').append(shellQuote(arg.getAsString()));
+			}
+			terminalCommands.put(id, "$ " + command);
+		}
+		return result;
 	}
 
 	private static String shellQuote(String value) {
@@ -446,28 +460,88 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 		return "Cursor wants to run a tool";
 	}
 
-	private static ToolCall toolCall(JsonObject update) {
+	private ToolCall toolCall(JsonObject update) {
 		return new ToolCall(string(update, "toolCallId", "tool"), string(update, "title", null),
 				string(update, "kind", null), string(update, "status", null), toolDetail(update));
 	}
 
-	private static String toolDetail(JsonObject update) {
-		if (update.has("locations") && update.get("locations").isJsonArray()) {
-			JsonArray locations = update.getAsJsonArray("locations");
-			if (!locations.isEmpty() && locations.get(0).isJsonObject()) {
-				return string(locations.get(0).getAsJsonObject(), "path", null);
-			}
-		}
+	private String toolDetail(JsonObject update) {
+		StringBuilder detail = new StringBuilder();
 		if (update.has("rawInput") && update.get("rawInput").isJsonObject()) {
 			JsonObject input = update.getAsJsonObject("rawInput");
 			for (String key : new String[] { "path", "filePath", "command", "pattern", "query" }) {
 				String value = string(input, key, null);
 				if (value != null) {
-					return value;
+					append(detail, "command".equals(key) ? "$ " + value : value);
+					break;
 				}
 			}
 		}
-		return null;
+		if (update.has("content") && update.get("content").isJsonArray()) {
+			for (JsonElement element : update.getAsJsonArray("content")) {
+				if (element.isJsonObject()) {
+					appendToolContent(detail, element.getAsJsonObject());
+				}
+			}
+		}
+		if (detail.isEmpty() && update.has("locations") && update.get("locations").isJsonArray()) {
+			JsonArray locations = update.getAsJsonArray("locations");
+			if (!locations.isEmpty() && locations.get(0).isJsonObject()) {
+				append(detail, string(locations.get(0).getAsJsonObject(), "path", null));
+			}
+		}
+		return detail.isEmpty() ? null : detail.toString();
+	}
+
+	private void appendToolContent(StringBuilder detail, JsonObject content) {
+		String type = string(content, "type", "");
+		if ("content".equals(type) && content.has("content") && content.get("content").isJsonObject()) {
+			append(detail, string(content.getAsJsonObject("content"), "text", null));
+		} else if ("diff".equals(type)) {
+			String path = string(content, "path", "Changed file");
+			String oldText = string(content, "oldText", null);
+			String newText = string(content, "newText", null);
+			append(detail, path + (oldText == null ? "\nAdded:\n" : "\nBefore:\n") + (oldText == null ? "" : oldText)
+					+ "\nAfter:\n" + (newText == null ? "(deleted)" : newText));
+		} else if ("terminal".equals(type)) {
+			String terminalId = string(content, "terminalId", null);
+			if (terminalId != null) {
+				append(detail, terminalDetail(terminalId));
+			}
+		}
+	}
+
+	private String terminalDetail(String terminalId) {
+		StringBuilder detail = new StringBuilder(terminalCommands.getOrDefault(terminalId, ""));
+		try {
+			JsonObject target = new JsonObject();
+			target.addProperty("terminalId", terminalId);
+			JsonObject output = terminals.handle("terminal/output", target);
+			String text = string(output, "output", null);
+			if (text != null && !text.isBlank()) {
+				append(detail, text);
+			}
+		} catch (RuntimeException ignored) {
+			// A released terminal still leaves its command available above.
+		}
+		return detail.toString();
+	}
+
+	private static void append(StringBuilder target, String value) {
+		if (value == null || value.isBlank()) {
+			return;
+		}
+		if (!target.isEmpty()) {
+			target.append("\n\n");
+		}
+		int remaining = MAX_TOOL_DETAIL - target.length();
+		if (remaining <= 0) {
+			return;
+		}
+		target.append(value, 0, Math.min(value.length(), remaining));
+		if (value.length() > remaining) {
+			target.append("\n\u2026 output truncated");
+		}
 	}
 
 	private static List<PlanEntry> entries(JsonArray array) {

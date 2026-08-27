@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import com.cursor.eclipse.CursorPlugin;
 import com.cursor.eclipse.prefs.PreferenceConstants;
@@ -23,6 +25,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 /** Lists the Cloud Agents of the signed-in account through the Cursor API. */
 public final class CloudAgents {
@@ -31,6 +35,7 @@ public final class CloudAgents {
 	private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
 	private static final int PAGE_SIZE = 100;
+	private static final Gson PRETTY_JSON = new GsonBuilder().setPrettyPrinting().create();
 
 	private CloudAgents() {
 	}
@@ -291,12 +296,20 @@ public final class CloudAgents {
 	/** Starts a follow-up run and returns its run id when the API supplies one. */
 	public static String followUp(String apiKey, String agentId, String prompt)
 			throws IOException, InterruptedException {
+		return followUp(apiKey, agentId, prompt, null);
+	}
+
+	public static String followUp(String apiKey, String agentId, String prompt, String mode)
+			throws IOException, InterruptedException {
 		HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT)
 				.followRedirects(HttpClient.Redirect.NORMAL).build();
 		JsonObject request = new JsonObject();
 		JsonObject promptObject = new JsonObject();
 		promptObject.addProperty("text", prompt);
 		request.add("prompt", promptObject);
+		if ("agent".equals(mode) || "plan".equals(mode)) {
+			request.addProperty("mode", mode);
+		}
 		String response = post(client, apiKey, API + "/v1/agents/" + encode(agentId) + "/runs", request.toString());
 		JsonElement root = JsonParser.parseString(response == null || response.isBlank() ? "{}" : response);
 		if (!root.isJsonObject()) {
@@ -314,6 +327,115 @@ public final class CloudAgents {
 				API + "/v1/agents/" + encode(agentId) + "/runs/" + encode(runId)));
 		JsonObject object = root.isJsonObject() ? root.getAsJsonObject() : new JsonObject();
 		return new CloudRun(string(object, "status"), string(object, "result"));
+	}
+
+	/** Streams one cloud run, including tool calls, until its terminal result. */
+	public static CloudRun streamRun(String apiKey, String agentId, String runId, Consumer<CloudToolCall> tools)
+			throws IOException, InterruptedException {
+		HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT)
+				.followRedirects(HttpClient.Redirect.NORMAL).build();
+		String url = API + "/v1/agents/" + encode(agentId) + "/runs/" + encode(runId) + "/stream";
+		HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofMinutes(30))
+				.header("Authorization", authorization(apiKey)).header("Accept", "text/event-stream").GET().build();
+		HttpResponse<Stream<String>> response = client.send(request, HttpResponse.BodyHandlers.ofLines());
+		if (response.statusCode() == 410) {
+			response.body().close();
+			return run(apiKey, agentId, runId);
+		}
+		if (response.statusCode() < 200 || response.statusCode() >= 300) {
+			response.body().close();
+			throw new IOException("Cursor stream returned HTTP " + response.statusCode());
+		}
+		String event = null;
+		StringBuilder data = new StringBuilder();
+		CloudRun terminal = null;
+		try (Stream<String> lines = response.body()) {
+			for (String line : (Iterable<String>) lines::iterator) {
+				if (line.isEmpty()) {
+					terminal = dispatchStreamEvent(event, data.toString(), tools, terminal);
+					event = null;
+					data.setLength(0);
+				} else if (line.startsWith("event:")) {
+					event = line.substring(6).trim();
+				} else if (line.startsWith("data:")) {
+					if (!data.isEmpty()) {
+						data.append('\n');
+					}
+					data.append(line.substring(5).trim());
+				}
+			}
+			terminal = dispatchStreamEvent(event, data.toString(), tools, terminal);
+		}
+		return terminal == null ? run(apiKey, agentId, runId) : terminal;
+	}
+
+	private static CloudRun dispatchStreamEvent(String event, String data, Consumer<CloudToolCall> tools,
+			CloudRun current) {
+		if (event == null || data.isBlank()) {
+			return current;
+		}
+		if ("tool_call".equals(event)) {
+			CloudToolCall tool = parseToolCall(data);
+			if (tool != null) {
+				tools.accept(tool);
+			}
+			return current;
+		}
+		if ("result".equals(event)) {
+			try {
+				JsonObject result = JsonParser.parseString(data).getAsJsonObject();
+				return new CloudRun(string(result, "status"), string(result, "text"));
+			} catch (RuntimeException ignored) {
+				return current;
+			}
+		}
+		return current;
+	}
+
+	static CloudToolCall parseToolCall(String data) {
+		try {
+			JsonObject call = JsonParser.parseString(data).getAsJsonObject();
+			String name = string(call, "name");
+			StringBuilder detail = new StringBuilder();
+			appendJson(detail, "Command / input", call.get("args"));
+			appendJson(detail, "Result", call.get("result"));
+			return new CloudToolCall(value(string(call, "callId"), "tool"), value(name, "Tool"),
+					toolKind(name), string(call, "status"), detail.isEmpty() ? null : detail.toString());
+		} catch (RuntimeException e) {
+			return null;
+		}
+	}
+
+	private static void appendJson(StringBuilder target, String heading, JsonElement value) {
+		if (value == null || value.isJsonNull()) {
+			return;
+		}
+		if (!target.isEmpty()) {
+			target.append("\n\n");
+		}
+		target.append(heading).append(":\n");
+		if (value.isJsonPrimitive()) {
+			target.append(value.getAsString());
+		} else {
+			target.append(PRETTY_JSON.toJson(value));
+		}
+	}
+
+	private static String toolKind(String name) {
+		String value = name == null ? "" : name.toLowerCase(java.util.Locale.ROOT);
+		if (value.contains("terminal") || value.contains("command") || value.contains("shell")) {
+			return "execute";
+		}
+		if (value.contains("edit") || value.contains("write") || value.contains("patch")) {
+			return "edit";
+		}
+		if (value.contains("read")) {
+			return "read";
+		}
+		if (value.contains("search") || value.contains("grep")) {
+			return "search";
+		}
+		return "other";
 	}
 
 	public static void cancelRun(String apiKey, String agentId, String runId) throws IOException, InterruptedException {
