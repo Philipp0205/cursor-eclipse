@@ -27,12 +27,20 @@ public final class NewAgentHandler extends AbstractHandler {
 		if (window == null) {
 			return null;
 		}
+		open(window, LaunchFactory.workingDirectory());
+		return null;
+	}
+
+	/** Opens the new-agent composer with the selected repository as its root. */
+	public static void open(IWorkbenchWindow window, File selectedRoot) {
+		if (window == null || selectedRoot == null) {
+			return;
+		}
 		NewAgentDialog dialog = new NewAgentDialog(window.getShell());
 		if (dialog.open() != Window.OK) {
-			return null;
+			return;
 		}
 		Result request = dialog.result();
-		File selectedRoot = LaunchFactory.workingDirectory();
 		int opened = 0;
 		for (int index = 0; index < request.copies(); index++) {
 			String displayName = request.copies() == 1 ? request.name() : request.name() + " " + (index + 1);
@@ -51,7 +59,6 @@ public final class NewAgentHandler extends AbstractHandler {
 				break;
 			}
 		}
-		return null;
 	}
 
 	private static void open(IWorkbenchWindow window, String displayName, File root, String prompt, boolean inCloud)

@@ -70,6 +70,20 @@ public class LocalChatHistoryTest {
 	}
 
 	@Test
+	public void combinesCliAndAcpSessionRoots() throws IOException {
+		Path cli = Files.createTempDirectory("cursor-cli-chats");
+		Path acp = Files.createTempDirectory("cursor-acp-chats");
+		writeChat(Files.createDirectories(cli.resolve("workspace-a")), "77777777-aaaa", "CLI session", "/tmp/a");
+		writeChat(acp, "88888888-bbbb", "ACP session", "/tmp/b");
+
+		List<LocalChat> chats = LocalChatHistory.read(List.of(cli, acp));
+
+		assertEquals(2, chats.size());
+		assertTrue(chats.stream().anyMatch(chat -> chat.id().equals("77777777-aaaa")));
+		assertTrue(chats.stream().anyMatch(chat -> chat.id().equals("88888888-bbbb")));
+	}
+
+	@Test
 	public void readsNothingWhenTheStoreIsMissing() {
 		assertTrue(LocalChatHistory.read(Path.of("/does/not/exist")).isEmpty());
 	}

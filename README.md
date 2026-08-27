@@ -79,18 +79,23 @@ while it is visible, or on demand with its refresh button:
 - **Open in Eclipse** — the chat views of this workbench, grouped by working
   folder, with each session's live state. Double-click one to bring it forward.
 - **Local chats** — the chats the Cursor CLI already stored under
-  `~/.cursor/chats`, grouped by the folder they ran in. Double-click one to open
-  a chat view on that folder and replay the conversation through ACP
+  its `chats` and `acp-sessions` roots (including `CURSOR_CONFIG_DIR` and XDG
+  locations), grouped by the folder they ran in. Double-click one to open a
+  chat view on that folder and replay the conversation through ACP
   `session/load`. Chats started in the Cursor desktop app are kept elsewhere and
   do not appear here.
 - **Cloud agents** — the Cloud Agents of the signed-in account, grouped by
-  repository and newest first within each folder. Double-click one to load its
+  repository name and newest first within each folder. Double-click one to load its
   conversation in an Eclipse Cursor chat, or use its context menu to open it on
   cursor.com. Archived agents are hidden by default; enable **Show archived
   cloud agents** in the view menu or Cursor preferences. This list needs an API key from
   [Cursor Dashboard → API Keys](https://cursor.com/dashboard/api) in
   **Preferences → Cursor** or in `CURSOR_API_KEY`, because `agent login` alone
   is not a REST credential.
+
+Running, completed, failed, and disconnected sessions have a status symbol
+before their title. Right-click a local repository folder to start an agent in
+that folder, or a cloud repository to create a Cloud Agent for that repository.
 
 Use the view's toolbar button, **Ctrl+Alt+N**, or **New Parallel Cursor Agent**
 in the chat toolbar to open the New Agent composer. It accepts a name, initial

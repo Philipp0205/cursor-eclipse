@@ -9,7 +9,9 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 
 /**
@@ -42,14 +44,62 @@ public final class LocalChatHistory {
 	private LocalChatHistory() {
 	}
 
-	/** The CLI chat store for the current user. */
+	/** The conventional CLI chat store for the current user. */
 	public static Path defaultRoot() {
 		return Path.of(System.getProperty("user.home", "."), ".cursor", "chats");
 	}
 
 	/** Every stored chat, newest first. */
 	public static List<LocalChat> read() {
-		return read(defaultRoot());
+		return read(discoveryRoots());
+	}
+
+	/**
+	 * Every Cursor CLI and ACP store that may be active for this process.
+	 *
+	 * <p>Cursor can move its data through {@code CURSOR_CONFIG_DIR} or
+	 * {@code XDG_CONFIG_HOME}. We retain the conventional roots too because
+	 * sessions started from an SSH shell and from a desktop process can use
+	 * different roots on the same machine.
+	 */
+	static List<Path> discoveryRoots() {
+		Path home = Path.of(System.getProperty("user.home", "."));
+		List<Path> configRoots = new ArrayList<>();
+		configRoots.add(home.resolve(".cursor"));
+		addRoot(configRoots, System.getenv("CURSOR_CONFIG_DIR"));
+		String xdg = System.getenv("XDG_CONFIG_HOME");
+		if (xdg != null && !xdg.isBlank()) {
+			configRoots.add(Path.of(xdg).resolve("cursor"));
+		}
+		configRoots.add(home.resolve(".config").resolve("cursor"));
+
+		Map<String, Path> roots = new LinkedHashMap<>();
+		for (Path config : configRoots) {
+			for (String store : List.of("chats", "acp-sessions")) {
+				Path root = config.resolve(store).toAbsolutePath().normalize();
+				roots.putIfAbsent(root.toString(), root);
+			}
+		}
+		return List.copyOf(roots.values());
+	}
+
+	private static void addRoot(List<Path> roots, String value) {
+		if (value != null && !value.isBlank()) {
+			roots.add(Path.of(value));
+		}
+	}
+
+	static List<LocalChat> read(List<Path> roots) {
+		Map<String, LocalChat> chats = new LinkedHashMap<>();
+		for (Path root : roots) {
+			for (LocalChat chat : read(root)) {
+				chats.merge(chat.id(), chat,
+						(left, right) -> left.modified().isAfter(right.modified()) ? left : right);
+			}
+		}
+		List<LocalChat> result = new ArrayList<>(chats.values());
+		result.sort(Comparator.comparing(LocalChat::modified).reversed());
+		return List.copyOf(result);
 	}
 
 	/** Every chat stored under {@code chatsRoot}, newest first. */

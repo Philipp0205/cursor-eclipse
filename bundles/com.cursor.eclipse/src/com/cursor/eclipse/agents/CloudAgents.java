@@ -176,7 +176,7 @@ public final class CloudAgents {
 	}
 
 	private static boolean archived(CloudAgent agent) {
-		return agent.status() != null && agent.status().toUpperCase(java.util.Locale.ROOT).contains("ARCHIVED");
+		return agent.archived();
 	}
 
 	private static List<CloudAgent> enrich(HttpClient client, String apiKey, List<CloudAgent> agents)
@@ -201,23 +201,83 @@ public final class CloudAgents {
 		HttpRequest request = HttpRequest.newBuilder(URI.create(API + "/v1/agents/" + encode(fallback.id())))
 				.timeout(REQUEST_TIMEOUT).header("Authorization", authorization(apiKey))
 				.header("Accept", "application/json").GET().build();
-		return client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
+		return client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenCompose(response -> {
 			if (response.statusCode() < 200 || response.statusCode() >= 300) {
-				return fallback;
+				return CompletableFuture.completedFuture(fallback);
 			}
 			CloudAgent parsed = parseAgent(response.body());
-			return parsed == null ? fallback : merge(fallback, parsed);
+			CloudAgent merged = parsed == null ? fallback : merge(fallback, parsed);
+			String latestRunId = member(response.body(), "latestRunId");
+			return latestRunId == null ? CompletableFuture.completedFuture(merged)
+					: runStatus(client, apiKey, merged, latestRunId);
 		}).exceptionally(error -> fallback);
+	}
+
+	private static CompletableFuture<CloudAgent> runStatus(HttpClient client, String apiKey, CloudAgent agent,
+			String runId) {
+		HttpRequest request = HttpRequest.newBuilder(
+				URI.create(API + "/v1/agents/" + encode(agent.id()) + "/runs/" + encode(runId)))
+				.timeout(REQUEST_TIMEOUT).header("Authorization", authorization(apiKey))
+				.header("Accept", "application/json").GET().build();
+		return client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
+			if (response.statusCode() < 200 || response.statusCode() >= 300) {
+				return agent;
+			}
+			String status = member(response.body(), "status");
+			return status == null ? agent
+					: new CloudAgent(agent.id(), agent.name(), status, agent.url(), agent.repository(),
+							agent.created(), agent.archived());
+		}).exceptionally(error -> agent);
 	}
 
 	private static CloudAgent merge(CloudAgent summary, CloudAgent detail) {
 		return new CloudAgent(summary.id(), value(detail.name(), summary.name()), value(detail.status(), summary.status()),
 				value(detail.url(), summary.url()), value(detail.repository(), summary.repository()),
-				detail.created().equals(Instant.EPOCH) ? summary.created() : detail.created());
+				detail.created().equals(Instant.EPOCH) ? summary.created() : detail.created(),
+				summary.archived() || detail.archived());
 	}
 
 	private static String value(String preferred, String fallback) {
 		return preferred == null || preferred.isBlank() ? fallback : preferred;
+	}
+
+	private static String member(String body, String name) {
+		try {
+			JsonElement root = JsonParser.parseString(body == null || body.isBlank() ? "{}" : body);
+			return root.isJsonObject() ? string(root.getAsJsonObject(), name) : null;
+		} catch (RuntimeException e) {
+			return null;
+		}
+	}
+
+	/** Creates a Cloud Agent in the selected repository. */
+	public static CloudAgent create(String apiKey, String repository, String prompt)
+			throws IOException, InterruptedException {
+		HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT)
+				.followRedirects(HttpClient.Redirect.NORMAL).build();
+		JsonObject request = new JsonObject();
+		JsonObject promptObject = new JsonObject();
+		promptObject.addProperty("text", prompt);
+		request.add("prompt", promptObject);
+		JsonArray repos = new JsonArray();
+		JsonObject repo = new JsonObject();
+		repo.addProperty("url", repository);
+		repos.add(repo);
+		request.add("repos", repos);
+		JsonElement root = JsonParser.parseString(post(client, apiKey, API + "/v1/agents", request.toString()));
+		if (!root.isJsonObject()) {
+			throw new IOException("Cursor returned an invalid Cloud Agent");
+		}
+		JsonObject object = root.getAsJsonObject();
+		JsonObject nested = object(object, "agent");
+		CloudAgent created = agent(nested == null ? object : nested);
+		if (created == null) {
+			throw new IOException("Cursor did not return a Cloud Agent ID");
+		}
+		return created.repository() == null
+				? new CloudAgent(created.id(), created.name(), created.status(), created.url(), repository,
+						created.created(), created.archived())
+				: created;
 	}
 
 	/** Retrieves the messages shown by a cloud agent. */
@@ -354,8 +414,10 @@ public final class CloudAgents {
 				repository = string(repositories.get(0).getAsJsonObject(), "url");
 			}
 		}
-		return new CloudAgent(id, name == null || name.isBlank() ? id : name, string(json, "status"), url, repository,
-				instant(string(json, "createdAt")));
+		String status = string(json, "status");
+		boolean archived = status != null && status.toUpperCase(java.util.Locale.ROOT).contains("ARCHIVED");
+		return new CloudAgent(id, name == null || name.isBlank() ? id : name, status, url, repository,
+				instant(string(json, "createdAt")), archived);
 	}
 
 	private static JsonArray array(JsonObject json, String member) {

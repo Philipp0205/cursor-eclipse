@@ -95,7 +95,7 @@ public class CloudAgentsTest {
 
 	@Test
 	public void usesRepositoryOwnerAndNameAsTheCloudFolder() {
-		assertEquals("acme/payments",
+		assertEquals("payments",
 				AgentsView.repositoryLabel("https://github.com/acme/payments.git"));
 		assertEquals("No repository", AgentsView.repositoryLabel(null));
 	}
