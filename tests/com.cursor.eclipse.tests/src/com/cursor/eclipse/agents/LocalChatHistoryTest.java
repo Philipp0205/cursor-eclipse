@@ -56,6 +56,20 @@ public class LocalChatHistoryTest {
 	}
 
 	@Test
+	public void readsChatsNestedBelowWorkspaceFolders() throws IOException {
+		Path root = Files.createTempDirectory("cursor-chats");
+		Path workspace = Files.createDirectories(root.resolve("home-dev-project"));
+		writeChat(workspace, "66666666-ffff", "Fix the nested session listing", "/home/dev/project");
+
+		List<LocalChat> chats = LocalChatHistory.read(root);
+
+		assertEquals(1, chats.size());
+		assertEquals("66666666-ffff", chats.get(0).id());
+		assertEquals("Fix the nested session listing", chats.get(0).title());
+		assertEquals("/home/dev/project", chats.get(0).workspace().getAbsolutePath());
+	}
+
+	@Test
 	public void readsNothingWhenTheStoreIsMissing() {
 		assertTrue(LocalChatHistory.read(Path.of("/does/not/exist")).isEmpty());
 	}

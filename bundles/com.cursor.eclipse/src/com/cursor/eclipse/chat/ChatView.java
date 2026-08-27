@@ -32,6 +32,8 @@ import com.cursor.eclipse.agent.SessionMode;
 import com.cursor.eclipse.agent.SessionModel;
 import com.cursor.eclipse.agent.SessionLaunchRegistry;
 import com.cursor.eclipse.agent.SessionLaunchRegistry.PendingPrompt;
+import com.cursor.eclipse.agents.CloudAgent;
+import com.cursor.eclipse.agents.CloudAgents;
 import com.cursor.eclipse.workspace.PromptContext;
 import com.cursor.eclipse.prefs.PreferenceConstants;
 import com.google.gson.JsonArray;
@@ -51,6 +53,7 @@ public class ChatView extends ViewPart {
 	private static final int INPUT_MAX_HEIGHT = 180;
 	private static final String MEMENTO_SESSION_ROOT = "cursorSessionRoot";
 	private static final String MEMENTO_SESSION_ID = "cursorSessionId";
+	private static final String MEMENTO_CLOUD_AGENT_ID = "cursorCloudAgentId";
 
 	private ConversationBrowser conversation;
 	private Text input;
@@ -65,6 +68,7 @@ public class ChatView extends ViewPart {
 	private ChatController controller;
 	private File sessionRoot;
 	private String sessionId;
+	private String cloudAgentId;
 
 	private List<SessionMode> modes = List.of();
 	private List<SessionModel> models = List.of();
@@ -95,10 +99,22 @@ public class ChatView extends ViewPart {
 			sessionRoot = LaunchFactory.workingDirectory();
 		}
 		String secondaryId = getViewSite().getSecondaryId();
+		CloudAgent cloudSession = SessionLaunchRegistry.takeCloud(secondaryId);
 		String viewName = secondaryId == null ? "Chat" : readableName(secondaryId);
+		if (cloudSession != null) {
+			viewName = cloudSession.name();
+		}
 		setPartName(secondaryId == null ? "Cursor Chat" : "Cursor: " + viewName);
 		SessionLaunchRegistry.register(secondaryId, viewName, sessionRoot);
 		refreshState("Disconnected");
+		if (cloudSession != null) {
+			cloudAgentId = cloudSession.id();
+		}
+		if (cloudAgentId != null) {
+			controller.loadCloudSession(cloudAgentId, CloudAgents.apiKey());
+			input.setMessage("Continue this Cursor Cloud conversation\u2026");
+			return;
+		}
 		String resume = SessionLaunchRegistry.takeResume(secondaryId);
 		if (resume == null) {
 			resume = sessionId;
@@ -131,6 +147,7 @@ public class ChatView extends ViewPart {
 				sessionRoot = new File(root);
 			}
 			sessionId = memento.getString(MEMENTO_SESSION_ID);
+			cloudAgentId = memento.getString(MEMENTO_CLOUD_AGENT_ID);
 		}
 	}
 
@@ -139,7 +156,9 @@ public class ChatView extends ViewPart {
 		if (sessionRoot != null) {
 			memento.putString(MEMENTO_SESSION_ROOT, sessionRoot.getAbsolutePath());
 		}
-		if (sessionId != null && !sessionId.isBlank()) {
+		if (cloudAgentId != null && !cloudAgentId.isBlank()) {
+			memento.putString(MEMENTO_CLOUD_AGENT_ID, cloudAgentId);
+		} else if (sessionId != null && !sessionId.isBlank()) {
 			memento.putString(MEMENTO_SESSION_ID, sessionId);
 		}
 		super.saveState(memento);
@@ -285,7 +304,8 @@ public class ChatView extends ViewPart {
 		}
 		// Editor, selection, and project state must be read on the SWT thread,
 		// before any worker touches the agent.
-		String agentText = inCloud ? "& " + text : text;
+		boolean existingCloud = controller.isCloud();
+		String agentText = inCloud && !existingCloud ? "& " + text : text;
 		JsonArray prompt = PromptContext.collect(agentText, getSite().getWorkbenchWindow(), List.copyOf(attachments));
 		File workingDirectory = workingDirectory();
 		input.setText("");
@@ -293,7 +313,8 @@ public class ChatView extends ViewPart {
 		updateAttachmentLabel();
 		growInput();
 		rememberHistory(text);
-		controller.send(prompt, inCloud ? text + "\n\n_Sent to Cursor Cloud_" : text, workingDirectory);
+		controller.send(prompt, inCloud && !existingCloud ? text + "\n\n_Sent to Cursor Cloud_" : text,
+				workingDirectory);
 	}
 
 	private void rememberHistory(String text) {
@@ -392,7 +413,7 @@ public class ChatView extends ViewPart {
 			boolean busy = controller.isBusy();
 			send.setText(busy ? "Stop" : "Send");
 			send.setEnabled(busy || !input.getText().isBlank() || controller.isConnected());
-			cloud.setEnabled(!busy && !input.getText().isBlank());
+			cloud.setEnabled(!controller.isCloud() && !busy && !input.getText().isBlank());
 			modeCombo.setEnabled(!busy && controller.isConnected() && !modes.isEmpty());
 			modelCombo.setEnabled(!busy && controller.isConnected() && !models.isEmpty());
 			statusRow.layout(true, true);
@@ -444,6 +465,12 @@ public class ChatView extends ViewPart {
 	void setSessionId(String sessionId) {
 		this.sessionId = sessionId;
 		SessionLaunchRegistry.update(getViewSite().getSecondaryId(), sessionId, null);
+	}
+
+	void setCloudAgentId(String agentId) {
+		cloudAgentId = agentId;
+		sessionId = null;
+		SessionLaunchRegistry.update(getViewSite().getSecondaryId(), agentId, null);
 	}
 
 	void selectModel(String modelId) {

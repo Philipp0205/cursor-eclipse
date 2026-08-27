@@ -33,6 +33,8 @@ public class CursorPreferencePage extends FieldEditorPreferencePage implements I
 				getFieldEditorParent()));
 		addField(new BooleanFieldEditor(PreferenceConstants.AUTO_START, "Connect when the Cursor view opens",
 				getFieldEditorParent()));
+		addField(new BooleanFieldEditor(PreferenceConstants.SHOW_ARCHIVED_CLOUD_AGENTS,
+				"Show archived cloud agents", getFieldEditorParent()));
 	}
 
 	/** Hides the stored key while it is displayed. */

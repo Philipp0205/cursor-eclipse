@@ -58,9 +58,10 @@ public final class LocalChatHistory {
 			return List.of();
 		}
 		List<LocalChat> chats = new ArrayList<>();
-		try (Stream<Path> directories = Files.list(chatsRoot)) {
-			directories.filter(Files::isDirectory).forEach(directory -> {
-				LocalChat chat = readChat(directory);
+		try (Stream<Path> stores = Files.walk(chatsRoot)) {
+			stores.filter(path -> Files.isRegularFile(path) && "store.db".equals(path.getFileName().toString()))
+					.forEach(store -> {
+				LocalChat chat = readChat(store.getParent());
 				if (chat != null) {
 					chats.add(chat);
 				}

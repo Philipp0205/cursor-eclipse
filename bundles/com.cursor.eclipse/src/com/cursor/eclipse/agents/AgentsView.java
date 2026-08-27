@@ -43,6 +43,7 @@ import com.cursor.eclipse.agent.LaunchFactory;
 import com.cursor.eclipse.agent.SessionLaunchRegistry;
 import com.cursor.eclipse.agent.SessionLaunchRegistry.OpenSession;
 import com.cursor.eclipse.chat.ChatView;
+import com.cursor.eclipse.prefs.PreferenceConstants;
 
 /**
  * Navigator for every Cursor agent this account can reach: the chat views open
@@ -57,7 +58,6 @@ public final class AgentsView extends ViewPart {
 	public static final String ID = "com.cursor.eclipse.agents.AgentsView";
 
 	private static final String PREFERENCE_PAGE_ID = "com.cursor.eclipse.prefs";
-	private static final int CLOUD_AGENT_LIMIT = 50;
 	private static final int AUTO_REFRESH_MS = 60_000;
 	/** Category, folder, and agent: the whole tree without a manual expand. */
 	private static final int EXPAND_LEVELS = 3;
@@ -101,6 +101,7 @@ public final class AgentsView extends ViewPart {
 			viewer.expandToLevel(EXPAND_LEVELS);
 		});
 		createContextMenu();
+		createViewMenu();
 		SessionLaunchRegistry.addListener(registryListener);
 		restoreChatViews();
 		refresh();
@@ -135,6 +136,7 @@ public final class AgentsView extends ViewPart {
 				manager.add(action("Open in Eclipse", () -> open(selected)));
 			}
 			if (selected instanceof CloudAgent agent) {
+				manager.add(action("Open in Eclipse", () -> openCloud(agent)));
 				manager.add(action("Open on cursor.com", () -> browse(agent.url())));
 			}
 			String id = identifier(selected);
@@ -145,6 +147,19 @@ public final class AgentsView extends ViewPart {
 			manager.add(action("Refresh", this::refresh));
 		});
 		viewer.getControl().setMenu(menu.createContextMenu(viewer.getControl()));
+	}
+
+	private void createViewMenu() {
+		Action showArchived = new Action("Show archived cloud agents", IAction.AS_CHECK_BOX) {
+			@Override
+			public void run() {
+				CursorPlugin.getDefault().getPreferenceStore().setValue(
+						PreferenceConstants.SHOW_ARCHIVED_CLOUD_AGENTS, isChecked());
+				refresh();
+			}
+		};
+		showArchived.setChecked(showArchived());
+		getViewSite().getActionBars().getMenuManager().add(showArchived);
 	}
 
 	private static IAction action(String label, Runnable body) {
@@ -201,7 +216,7 @@ public final class AgentsView extends ViewPart {
 			List<CloudAgent> agents = List.of();
 			Note note;
 			try {
-				agents = CloudAgents.list(CloudAgents.apiKey(), CLOUD_AGENT_LIMIT);
+				agents = CloudAgents.list(CloudAgents.apiKey(), showArchived());
 				note = agents.isEmpty() ? new Note("No cloud agents", NoteAction.NONE) : null;
 			} catch (CloudAgents.NotAuthorizedException e) {
 				note = new Note(e.getMessage(), NoteAction.PREFERENCES);
@@ -246,12 +261,30 @@ public final class AgentsView extends ViewPart {
 		} else if (element instanceof LocalChat chat) {
 			resume(chat);
 		} else if (element instanceof CloudAgent agent) {
-			browse(agent.url());
+			openCloud(agent);
 		} else if (element instanceof Note note && note.action() == NoteAction.PREFERENCES) {
 			PreferencesUtil.createPreferenceDialogOn(getSite().getShell(), PREFERENCE_PAGE_ID,
 					new String[] { PREFERENCE_PAGE_ID }, null).open();
 		} else if (element != null && viewer != null) {
 			viewer.setExpandedState(element, !viewer.getExpandedState(element));
+		}
+	}
+
+	private void openCloud(CloudAgent agent) {
+		for (OpenSession session : SessionLaunchRegistry.sessions()) {
+			if (agent.id().equals(session.sessionId())) {
+				activate(session);
+				return;
+			}
+		}
+		String secondaryId = "cloud-" + safeId(agent.id()) + "-" + Instant.now().toEpochMilli();
+		SessionLaunchRegistry.put(secondaryId, LaunchFactory.workingDirectory());
+		SessionLaunchRegistry.putCloud(secondaryId, agent);
+		try {
+			getSite().getPage().showView(ChatView.ID, secondaryId, IWorkbenchPage.VIEW_ACTIVATE);
+		} catch (PartInitException e) {
+			SessionLaunchRegistry.remove(secondaryId);
+			CursorPlugin.log("Could not open Cursor cloud agent " + agent.id(), e);
 		}
 	}
 
@@ -365,7 +398,8 @@ public final class AgentsView extends ViewPart {
 	private List<Object> categories() {
 		List<OpenSession> open = SessionLaunchRegistry.sessions().stream().filter(this::matches).toList();
 		List<LocalChat> local = localChats.stream().filter(this::matches).toList();
-		List<CloudAgent> cloud = cloudAgents.stream().filter(this::matches).toList();
+		List<CloudAgent> cloud = cloudAgents.stream().filter(agent -> showArchived() || !isArchived(agent))
+				.filter(this::matches).toList();
 		boolean filtering = !query().isEmpty();
 		List<Object> categories = new ArrayList<>();
 		categories.add(new Category("Open in Eclipse",
@@ -374,8 +408,18 @@ public final class AgentsView extends ViewPart {
 				withNote(byFolder(local, chat -> chat.workspace() == null ? unknownFolder() : chat.workspace(),
 						Comparator.comparing(LocalChat::modified).reversed()), filtering ? null : localNote)));
 		categories.add(new Category("Cloud agents",
-				withNote(byCloudStatus(cloud), filtering ? null : cloudNote)));
+				withNote(byCloudRepository(cloud), filtering ? null : cloudNote)));
 		return categories;
+	}
+
+	private boolean showArchived() {
+		CursorPlugin plugin = CursorPlugin.getDefault();
+		return plugin != null && plugin.getPreferenceStore()
+				.getBoolean(PreferenceConstants.SHOW_ARCHIVED_CLOUD_AGENTS);
+	}
+
+	private static boolean isArchived(CloudAgent agent) {
+		return agent.status() != null && agent.status().toUpperCase(Locale.ROOT).contains("ARCHIVED");
 	}
 
 	private String query() {
@@ -407,32 +451,35 @@ public final class AgentsView extends ViewPart {
 		return false;
 	}
 
-	private static List<Object> byCloudStatus(List<CloudAgent> agents) {
-		Map<String, List<Object>> groups = new LinkedHashMap<>();
-		groups.put("In progress", new ArrayList<>());
-		groups.put("Needs attention", new ArrayList<>());
-		groups.put("Done", new ArrayList<>());
+	private static List<Object> byCloudRepository(List<CloudAgent> agents) {
+		Map<String, List<Object>> groups = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 		for (CloudAgent agent : agents) {
-			groups.get(cloudGroup(agent.status())).add(agent);
+			groups.computeIfAbsent(repositoryLabel(agent.repository()), ignored -> new ArrayList<>()).add(agent);
 		}
 		List<Object> result = new ArrayList<>();
 		groups.forEach((label, children) -> {
 			if (!children.isEmpty()) {
+				children.sort((left, right) -> ((CloudAgent) right).created().compareTo(((CloudAgent) left).created()));
 				result.add(new GroupNode(label, children));
 			}
 		});
 		return result;
 	}
 
-	private static String cloudGroup(String status) {
-		String value = status == null ? "" : status.toUpperCase(Locale.ROOT);
-		if (value.contains("ACTIVE") || value.contains("RUNNING") || value.contains("CREATING")) {
-			return "In progress";
+	static String repositoryLabel(String repository) {
+		if (repository == null || repository.isBlank()) {
+			return "No repository";
 		}
-		if (value.contains("ERROR") || value.contains("FAIL") || value.contains("ATTENTION")) {
-			return "Needs attention";
+		try {
+			String path = URI.create(repository).getPath();
+			if (path != null && !path.isBlank()) {
+				String label = path.replaceFirst("^/+", "").replaceFirst("\\.git$", "");
+				return label.isBlank() ? repository : label;
+			}
+		} catch (IllegalArgumentException ignored) {
+			// Keep non-URL repository labels readable.
 		}
-		return "Done";
+		return repository.replaceFirst("\\.git$", "");
 	}
 
 	private static List<Object> withNote(List<Object> children, Note note) {
@@ -537,7 +584,7 @@ public final class AgentsView extends ViewPart {
 			if (element instanceof CloudAgent agent) {
 				String repository = agent.repository() == null ? "" : "\nRepository: " + agent.repository();
 				return agent.name() + "\nAgent: " + agent.id() + repository
-						+ "\nDouble-click to open it on cursor.com";
+						+ "\nDouble-click to open the conversation in Eclipse";
 			}
 			if (element instanceof Note note) {
 				return note.action() == NoteAction.PREFERENCES

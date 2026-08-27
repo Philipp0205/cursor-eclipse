@@ -15,5 +15,6 @@ public class PreferenceInitializer extends AbstractPreferenceInitializer {
 		store.setDefault(PreferenceConstants.API_KEY, "");
 		store.setDefault(PreferenceConstants.DEFAULT_CWD, "");
 		store.setDefault(PreferenceConstants.AUTO_START, false);
+		store.setDefault(PreferenceConstants.SHOW_ARCHIVED_CLOUD_AGENTS, false);
 	}
 }
