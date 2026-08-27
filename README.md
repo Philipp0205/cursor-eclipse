@@ -23,6 +23,7 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 - Cursor questions, plan approval, todos, subagent, and generated-image notifications
 - Project/user `.cursor/mcp.json` discovery and ACP session configuration
 - Resumable sessions and multiple parallel agent views, with optional isolated Git worktrees
+- An agents view over open chats, existing Cursor CLI chats, and the account's cloud agents
 - Eclipse Git Staging review, embedded app preview, Cursor cloud dashboard, and `&` cloud handoff
 
 ## Prerequisites
@@ -72,12 +73,27 @@ In Eclipse: **Help → Install New Software… → Add…** and choose that fold
 5. The view toolbar starts a new session; the view menu has Connect, Disconnect,
    Resume, Review changes, Open app preview, Cloud Agents, and Preferences.
 
-The **Cursor Agents** view groups open chats by working folder and shows each
-session's live state. Double-click a session to bring its chat forward. Use its
-toolbar button (or **New Parallel Cursor Agent** in the chat toolbar) to open
-another independent agent. Eclipse asks whether its edits should be isolated in
-a Git worktree. Each agent runs in its own normal Eclipse view instance, so
-views can be tabbed or split using standard workbench controls.
+The **Cursor Agents** view lists three groups and reloads them every minute
+while it is visible, or on demand with its refresh button:
+
+- **Open in Eclipse** — the chat views of this workbench, grouped by working
+  folder, with each session's live state. Double-click one to bring it forward.
+- **Local chats** — the chats the Cursor CLI already stored under
+  `~/.cursor/chats`, grouped by the folder they ran in. Double-click one to open
+  a chat view on that folder and replay the conversation through ACP
+  `session/load`. Chats started in the Cursor desktop app are kept elsewhere and
+  do not appear here.
+- **Cloud agents** — the Cloud Agents of the signed-in account, newest first.
+  Double-click one to open it on cursor.com. This list needs an API key from
+  [Cursor Dashboard → API Keys](https://cursor.com/dashboard/api) in
+  **Preferences → Cursor** or in `CURSOR_API_KEY`, because `agent login` alone
+  is not a REST credential.
+
+Use the view's toolbar button (or **New Parallel Cursor Agent** in the chat
+toolbar) to open another independent agent. Eclipse asks whether its edits
+should be isolated in a Git worktree. Each agent runs in its own normal Eclipse
+view instance, so views can be tabbed or split using standard workbench
+controls.
 
 File access requested over ACP is restricted to the current Eclipse workspace.
 The agent may still use its own filesystem tools according to Cursor's permission
