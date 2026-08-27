@@ -1,74 +1,71 @@
 package com.cursor.eclipse.chat.handlers;
 
 import java.io.File;
-import java.nio.file.Files;
 import java.time.Instant;
-import java.util.Locale;
 
 import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.jface.dialogs.InputDialog;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.window.Window;
 import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.IWorkbenchWindow;
 import org.eclipse.ui.handlers.HandlerUtil;
 
+import com.cursor.eclipse.agent.GitWorktrees;
 import com.cursor.eclipse.agent.LaunchFactory;
 import com.cursor.eclipse.agent.SessionLaunchRegistry;
 import com.cursor.eclipse.chat.ChatView;
+import com.cursor.eclipse.chat.handlers.NewAgentDialog.Result;
+import com.cursor.eclipse.chat.handlers.NewAgentDialog.Target;
 
-/** Opens another independent local agent, optionally in an isolated worktree. */
+/** Opens one or more independent local or cloud-backed agents. */
 public final class NewAgentHandler extends AbstractHandler {
 
 	@Override
 	public Object execute(ExecutionEvent event) throws org.eclipse.core.commands.ExecutionException {
-		var window = HandlerUtil.getActiveWorkbenchWindow(event);
+		IWorkbenchWindow window = HandlerUtil.getActiveWorkbenchWindow(event);
 		if (window == null) {
 			return null;
 		}
-		InputDialog dialog = new InputDialog(window.getShell(), "New Cursor agent", "Agent name:", "agent", value ->
-				value == null || value.isBlank() ? "Enter a name" : null);
+		NewAgentDialog dialog = new NewAgentDialog(window.getShell());
 		if (dialog.open() != Window.OK) {
 			return null;
 		}
-		String name = safeName(dialog.getValue());
-		File root = LaunchFactory.workingDirectory();
-		boolean isolated = MessageDialog.openQuestion(window.getShell(), "Isolate changes?",
-				"Create this agent in a separate Git worktree?");
-		if (isolated) {
+		Result request = dialog.result();
+		File selectedRoot = LaunchFactory.workingDirectory();
+		int opened = 0;
+		for (int index = 0; index < request.copies(); index++) {
+			String displayName = request.copies() == 1 ? request.name() : request.name() + " " + (index + 1);
+			File root = selectedRoot;
 			try {
-				root = createWorktree(root, name);
+				if (request.isolated()) {
+					root = GitWorktrees.create(selectedRoot, LaunchFactory.workspaceDirectory(), displayName);
+				}
+				open(window, displayName, root, request.prompt(), request.target() == Target.CLOUD);
+				opened++;
 			} catch (Exception e) {
-				throw new org.eclipse.core.commands.ExecutionException("Could not create Cursor worktree", e);
+				String summary = opened == 0 ? "No agents were started."
+						: opened + " of " + request.copies() + " agents were started.";
+				MessageDialog.openError(window.getShell(), "Could not start " + displayName,
+						e.getMessage() + "\n\n" + summary);
+				break;
 			}
-		}
-		String secondaryId = name + "-" + Instant.now().toEpochMilli();
-		SessionLaunchRegistry.put(secondaryId, root);
-		try {
-			window.getActivePage().showView(ChatView.ID, secondaryId, IWorkbenchPage.VIEW_ACTIVATE);
-		} catch (Exception e) {
-			SessionLaunchRegistry.remove(secondaryId);
-			throw new org.eclipse.core.commands.ExecutionException("Could not open Cursor agent view", e);
 		}
 		return null;
 	}
 
-	private static File createWorktree(File repository, String name) throws Exception {
-		File container = new File(LaunchFactory.workspaceDirectory(), ".cursor-worktrees");
-		Files.createDirectories(container.toPath());
-		File target = new File(container, name + "-" + Instant.now().toEpochMilli());
-		String branch = "cursor/eclipse-" + name + "-" + Long.toString(Instant.now().toEpochMilli(), 36);
-		Process process = new ProcessBuilder("git", "worktree", "add", "-b", branch, target.getAbsolutePath())
-				.directory(repository).redirectErrorStream(true).start();
-		String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-		if (process.waitFor() != 0) {
-			throw new IllegalStateException(output.isBlank() ? "git worktree add failed" : output.trim());
+	private static void open(IWorkbenchWindow window, String displayName, File root, String prompt, boolean inCloud)
+			throws Exception {
+		String name = GitWorktrees.safeName(displayName);
+		String secondaryId = name + "-" + Instant.now().toEpochMilli() + "-"
+				+ Integer.toString(displayName.hashCode(), 36).replace('-', 'x');
+		SessionLaunchRegistry.put(secondaryId, root);
+		SessionLaunchRegistry.putPrompt(secondaryId, prompt, inCloud);
+		try {
+			window.getActivePage().showView(ChatView.ID, secondaryId, IWorkbenchPage.VIEW_ACTIVATE);
+		} catch (Exception e) {
+			SessionLaunchRegistry.remove(secondaryId);
+			throw e;
 		}
-		return target;
-	}
-
-	private static String safeName(String value) {
-		String name = value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9-]+", "-").replaceAll("(^-+|-+$)", "");
-		return name.isBlank() ? "agent" : name;
 	}
 }

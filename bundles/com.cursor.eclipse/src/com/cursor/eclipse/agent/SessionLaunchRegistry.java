@@ -18,6 +18,7 @@ public final class SessionLaunchRegistry {
 
 	private static final Map<String, File> ROOTS = new ConcurrentHashMap<>();
 	private static final Map<String, String> RESUMES = new ConcurrentHashMap<>();
+	private static final Map<String, PendingPrompt> PROMPTS = new ConcurrentHashMap<>();
 	private static final Map<String, OpenSession> SESSIONS = new ConcurrentHashMap<>();
 	private static final List<Runnable> LISTENERS = new CopyOnWriteArrayList<>();
 
@@ -46,6 +47,18 @@ public final class SessionLaunchRegistry {
 	/** Returns and clears the session a newly opened chat view should resume. */
 	public static String takeResume(String secondaryId) {
 		return secondaryId == null ? null : RESUMES.remove(secondaryId);
+	}
+
+	/** Supplies the task that a newly opened agent should start immediately. */
+	public static void putPrompt(String secondaryId, String text, boolean inCloud) {
+		if (secondaryId != null && text != null && !text.isBlank()) {
+			PROMPTS.put(secondaryId, new PendingPrompt(text, inCloud));
+		}
+	}
+
+	/** Returns and clears a task queued for a newly opened agent view. */
+	public static PendingPrompt takePrompt(String secondaryId) {
+		return secondaryId == null ? null : PROMPTS.remove(secondaryId);
 	}
 
 	public static void register(String secondaryId, String name, File root) {
@@ -80,6 +93,7 @@ public final class SessionLaunchRegistry {
 		if (secondaryId != null) {
 			ROOTS.remove(secondaryId);
 			RESUMES.remove(secondaryId);
+			PROMPTS.remove(secondaryId);
 		}
 		SESSIONS.remove(key(secondaryId));
 		fireChanged();
@@ -96,5 +110,8 @@ public final class SessionLaunchRegistry {
 	}
 
 	public record OpenSession(String id, String secondaryId, String name, File root, String sessionId, String status) {
+	}
+
+	public record PendingPrompt(String text, boolean inCloud) {
 	}
 }
