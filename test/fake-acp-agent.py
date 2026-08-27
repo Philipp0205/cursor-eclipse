@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 
-STATE = {"cwd": os.getcwd(), "cancelled": False}
+STATE = {"cwd": os.getcwd(), "cancelled": False, "session": "demo-session"}
 WRITE_LOCK = threading.Lock()
 
 
@@ -29,7 +29,7 @@ def notify(method, params):
 
 
 def update(payload):
-    notify("session/update", {"sessionId": "demo-session", "update": payload})
+    notify("session/update", {"sessionId": STATE["session"], "update": payload})
 
 
 def chunk(text, kind="agent_message_chunk"):
@@ -131,6 +131,23 @@ def finish_after_write():
     finish()
 
 
+def replay(request_id):
+    """Answers session/load the way an agent restoring a stored chat does."""
+    conversation = [
+        ("user", "Where does the plugin decide which folder a session runs in?"),
+        ("agent", "`LaunchFactory.workingDirectory()` picks the selected project, then the "
+                  "configured default, then the workspace root.\n"),
+        ("user", "Good. Add a test for the worktree case."),
+        ("agent", "Added `SessionLaunchRegistryTest.tracksPrimaryAndSecondarySessionsByFolder`, "
+                  "which registers a chat in a worktree and asserts the folder grouping.\n"),
+    ]
+    for role, text in conversation:
+        update({"sessionUpdate": "user_message_chunk" if role == "user" else "agent_message_chunk",
+                "content": {"type": "text", "text": text}})
+        time.sleep(0.2)
+    send({"jsonrpc": "2.0", "id": request_id, "result": {}})
+
+
 def finish():
     if STATE.get("prompt_id") is not None:
         send({"jsonrpc": "2.0", "id": STATE["prompt_id"],
@@ -155,10 +172,11 @@ def main():
             send({"jsonrpc": "2.0", "id": request_id, "result": {
                 "protocolVersion": 1,
                 "authMethods": [],
-                "agentCapabilities": {"loadSession": False},
+                "agentCapabilities": {"loadSession": True},
             }})
         elif method == "session/new":
             STATE["cwd"] = message["params"]["cwd"]
+            STATE["session"] = "demo-session"
             send({"jsonrpc": "2.0", "id": request_id, "result": {
                 "sessionId": "demo-session",
                 "modes": {
@@ -170,6 +188,10 @@ def main():
                     ],
                 },
             }})
+        elif method == "session/load":
+            STATE["cwd"] = message["params"].get("cwd", STATE["cwd"])
+            STATE["session"] = message["params"]["sessionId"]
+            threading.Thread(target=replay, args=(request_id,), daemon=True).start()
         elif method == "session/set_mode":
             update({"sessionUpdate": "current_mode_update", "modeId": message["params"]["modeId"]})
             send({"jsonrpc": "2.0", "id": request_id, "result": {}})

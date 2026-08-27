@@ -198,6 +198,12 @@ public final class CursorSession implements AutoCloseable, AcpClientListener {
 				listener.onAgentThought(text);
 			}
 		}
+		case "user_message_chunk" -> {
+			String text = SessionUpdates.chunkText(params);
+			if (text != null) {
+				listener.onUserText(text);
+			}
+		}
 		case "tool_call", "tool_call_update" -> listener.onToolCall(toolCall(update));
 		case "plan" -> listener.onPlan(entries(update.getAsJsonArray("entries")));
 		case "current_mode_update" -> listener.onModeChanged(string(update, "modeId", null));

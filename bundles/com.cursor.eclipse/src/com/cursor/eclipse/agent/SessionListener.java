@@ -23,6 +23,11 @@ public interface SessionListener {
 	/** A chunk of streamed assistant text. */
 	void onAgentText(String text);
 
+	/** A chunk of user text, replayed while a stored session is loaded. */
+	default void onUserText(String text) {
+		// optional
+	}
+
 	/** A chunk of streamed reasoning text. */
 	void onAgentThought(String text);
 
