@@ -18,6 +18,7 @@ import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.action.Separator;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
+import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.ITreeContentProvider;
 import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jface.viewers.TreeViewer;
@@ -73,6 +74,8 @@ public final class AgentsView extends ViewPart {
 		viewer = new TreeViewer(parent, SWT.SINGLE | SWT.H_SCROLL | SWT.V_SCROLL);
 		viewer.setContentProvider(new AgentsContentProvider());
 		viewer.setLabelProvider(new AgentsLabelProvider());
+		// Without this the label provider's tooltips are never shown.
+		ColumnViewerToolTipSupport.enableFor(viewer);
 		viewer.setAutoExpandLevel(EXPAND_LEVELS);
 		viewer.setInput(this);
 		viewer.addDoubleClickListener(event -> {
