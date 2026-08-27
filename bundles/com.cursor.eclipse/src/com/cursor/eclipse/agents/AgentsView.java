@@ -32,6 +32,7 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.IWorkbenchPage;
+import org.eclipse.ui.IViewReference;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.dialogs.PreferencesUtil;
@@ -101,8 +102,28 @@ public final class AgentsView extends ViewPart {
 		});
 		createContextMenu();
 		SessionLaunchRegistry.addListener(registryListener);
+		restoreChatViews();
 		refresh();
 		scheduleAutoRefresh();
+	}
+
+	/**
+	 * Eclipse restores inactive tabs lazily. Materialize saved chat views in the
+	 * background so the navigator and automatic session resume are complete
+	 * without requiring the user to visit every tab first.
+	 */
+	private void restoreChatViews() {
+		viewer.getControl().getDisplay().asyncExec(() -> {
+			if (viewer == null || viewer.getControl().isDisposed()) {
+				return;
+			}
+			for (IViewReference reference : getSite().getPage().getViewReferences()) {
+				if (ChatView.ID.equals(reference.getId())) {
+					reference.getView(true);
+				}
+			}
+			scheduleRefresh();
+		});
 	}
 
 	private void createContextMenu() {

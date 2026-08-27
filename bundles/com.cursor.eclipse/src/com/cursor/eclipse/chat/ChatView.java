@@ -443,7 +443,7 @@ public class ChatView extends ViewPart {
 
 	void setSessionId(String sessionId) {
 		this.sessionId = sessionId;
-		SessionLaunchRegistry.update(getViewSite().getSecondaryId(), sessionId, "Ready");
+		SessionLaunchRegistry.update(getViewSite().getSecondaryId(), sessionId, null);
 	}
 
 	void selectModel(String modelId) {

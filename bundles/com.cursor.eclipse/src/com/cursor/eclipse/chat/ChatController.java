@@ -212,7 +212,7 @@ final class ChatController implements SessionListener {
 		view.ui(() -> {
 			view.setSessionId(sessionId);
 			view.setModes(modes, currentModeId);
-			view.refreshState("Ready");
+			view.refreshState(busy ? "Working" : "Ready");
 		});
 	}
 
