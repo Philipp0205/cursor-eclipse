@@ -19,6 +19,9 @@ import com.cursor.eclipse.agent.SessionListener;
 import com.cursor.eclipse.agent.SessionModel;
 import com.cursor.eclipse.agent.SessionMode;
 import com.cursor.eclipse.agent.ToolCall;
+import com.cursor.eclipse.agents.CloudAgents;
+import com.cursor.eclipse.agents.CloudAgents.CloudRun;
+import com.cursor.eclipse.agents.CloudMessage;
 import com.google.gson.JsonArray;
 
 /**
@@ -43,6 +46,9 @@ final class ChatController implements SessionListener {
 	private final AtomicReference<String> pendingStatus = new AtomicReference<>();
 	private volatile boolean busy;
 	private volatile boolean connecting;
+	private volatile String cloudAgentId;
+	private volatile String cloudApiKey;
+	private volatile String cloudRunId;
 
 	ChatController(ChatView view) {
 		this.view = view;
@@ -53,7 +59,11 @@ final class ChatController implements SessionListener {
 	}
 
 	boolean isConnected() {
-		return session.isConnected();
+		return cloudAgentId != null || session.isConnected();
+	}
+
+	boolean isCloud() {
+		return cloudAgentId != null;
 	}
 
 	boolean isConnecting() {
@@ -68,6 +78,10 @@ final class ChatController implements SessionListener {
 	 * @param workingDirectory session root, already resolved on the UI thread
 	 */
 	void send(JsonArray prompt, String displayText, File workingDirectory) {
+		if (isCloud()) {
+			sendCloud(displayText);
+			return;
+		}
 		if (busy) {
 			return;
 		}
@@ -106,10 +120,103 @@ final class ChatController implements SessionListener {
 			return;
 		}
 		view.refreshState("Stopping");
+		if (isCloud()) {
+			String runId = cloudRunId;
+			if (runId != null) {
+				worker("cursor-cloud-cancel", () -> {
+					try {
+						CloudAgents.cancelRun(cloudApiKey, cloudAgentId, runId);
+					} catch (Exception e) {
+						reportError(e);
+					}
+				});
+			}
+			return;
+		}
 		worker("cursor-cancel", session::cancel);
 	}
 
+	void loadCloudSession(String agentId, String apiKey) {
+		cloudAgentId = agentId;
+		cloudApiKey = apiKey;
+		view.setCloudAgentId(agentId);
+		view.setModes(List.of(), null);
+		view.setModels(List.of(), null);
+		reloadCloudConversation("Cloud Agent ready");
+	}
+
+	private void sendCloud(String displayText) {
+		if (busy || cloudAgentId == null) {
+			return;
+		}
+		busy = true;
+		int current = turn.incrementAndGet();
+		String userId = "user-" + current;
+		view.putBlock(userId, ConversationHtml.message(userId, "user", displayText));
+		view.putBlock(activityId(current), ConversationHtml.activity(activityId(current), "Working in Cursor Cloud"));
+		view.refreshState("Sending to Cursor Cloud");
+		worker("cursor-cloud-followup", () -> {
+			try {
+				cloudRunId = CloudAgents.followUp(cloudApiKey, cloudAgentId, displayText);
+				if (cloudRunId == null) {
+					throw new IllegalStateException("Cursor did not return a cloud run ID");
+				}
+				CloudRun run;
+				do {
+					Thread.sleep(2_000);
+					run = CloudAgents.run(cloudApiKey, cloudAgentId, cloudRunId);
+					view.refreshState(readableCloudStatus(run.status()));
+				} while (!run.terminal());
+				if ("ERROR".equalsIgnoreCase(run.status())) {
+					throw new IllegalStateException(run.result() == null ? "Cloud run failed" : run.result());
+				}
+				reloadCloudConversation("Cloud Agent ready");
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				finishTurn(current, "Interrupted");
+			} catch (Exception e) {
+				String message = describe(e);
+				CursorPlugin.log(message, e);
+				view.putBlock("error-" + current, ConversationHtml.error("error-" + current, message));
+				finishTurn(current, "Failed");
+			} finally {
+				cloudRunId = null;
+			}
+		});
+	}
+
+	private void reloadCloudConversation(String readyStatus) {
+		worker("cursor-cloud-conversation", () -> {
+			try {
+				List<CloudMessage> messages = CloudAgents.conversation(cloudApiKey, cloudAgentId);
+				view.clearConversationBeforeReplay();
+				int index = 0;
+				for (CloudMessage message : messages) {
+					String id = "cloud-" + index++ + "-" + message.id();
+					view.putBlock(id, ConversationHtml.message(id, message.role(), message.text()));
+				}
+				turn.set(messages.size());
+				busy = false;
+				view.refreshState(readyStatus);
+			} catch (Exception e) {
+				busy = false;
+				reportError(e);
+			}
+		});
+	}
+
+	private static String readableCloudStatus(String status) {
+		if (status == null || status.isBlank()) {
+			return "Working in Cursor Cloud";
+		}
+		String lower = status.toLowerCase().replace('_', ' ');
+		return "Cloud run " + lower;
+	}
+
 	void newSession(File workingDirectory) {
+		if (isCloud()) {
+			return;
+		}
 		worker("cursor-new-session", () -> {
 			try {
 				clearBuffers();
@@ -153,6 +260,10 @@ final class ChatController implements SessionListener {
 	}
 
 	void connect(File workingDirectory) {
+		if (isCloud()) {
+			reloadCloudConversation("Cloud Agent ready");
+			return;
+		}
 		if (session.isConnected() || connecting) {
 			return;
 		}
@@ -171,6 +282,9 @@ final class ChatController implements SessionListener {
 	}
 
 	void disconnect() {
+		if (isCloud()) {
+			return;
+		}
 		worker("cursor-disconnect", session::stop);
 	}
 
@@ -202,7 +316,9 @@ final class ChatController implements SessionListener {
 
 	/** Stops the agent without blocking the SWT thread. */
 	void shutdown() {
-		new Thread(session::close, "cursor-shutdown").start();
+		if (!isCloud()) {
+			new Thread(session::close, "cursor-shutdown").start();
+		}
 	}
 
 	// --- SessionListener -----------------------------------------------------

@@ -63,6 +63,44 @@ public class CloudAgentsTest {
 	}
 
 	@Test
+	public void readsRepositoryFromV1AgentDetails() {
+		List<CloudAgent> agents = CloudAgents.parse("""
+				{
+				  "items": [{
+				    "id": "bc-2",
+				    "name": "Update payments",
+				    "repos": [{"url": "https://github.com/acme/payments", "startingRef": "main"}]
+				  }]
+				}
+				""");
+
+		assertEquals("https://github.com/acme/payments", agents.get(0).repository());
+	}
+
+	@Test
+	public void readsCloudConversationMessages() {
+		List<CloudMessage> messages = CloudAgents.parseConversation("""
+				{"messages":[
+				  {"id":"msg-1","type":"user_message","text":"Fix it"},
+				  {"id":"msg-2","type":"assistant_message","text":"Done"},
+				  {"id":"ignored","type":"assistant_message"}
+				]}
+				""");
+
+		assertEquals(2, messages.size());
+		assertEquals("user", messages.get(0).role());
+		assertEquals("Fix it", messages.get(0).text());
+		assertEquals("assistant", messages.get(1).role());
+	}
+
+	@Test
+	public void usesRepositoryOwnerAndNameAsTheCloudFolder() {
+		assertEquals("acme/payments",
+				AgentsView.repositoryLabel("https://github.com/acme/payments.git"));
+		assertEquals("No repository", AgentsView.repositoryLabel(null));
+	}
+
+	@Test
 	public void fillsInMissingFields() {
 		List<CloudAgent> agents = CloudAgents.parse("{\"items\":[{\"id\":\"bc-3\"},{\"name\":\"no id\"}]}");
 

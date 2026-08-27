@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import com.cursor.eclipse.agents.CloudAgent;
+
 /**
  * Tracks open chat views and their working folders.
  *
@@ -19,6 +21,7 @@ public final class SessionLaunchRegistry {
 	private static final Map<String, File> ROOTS = new ConcurrentHashMap<>();
 	private static final Map<String, String> RESUMES = new ConcurrentHashMap<>();
 	private static final Map<String, PendingPrompt> PROMPTS = new ConcurrentHashMap<>();
+	private static final Map<String, CloudAgent> CLOUD_SESSIONS = new ConcurrentHashMap<>();
 	private static final Map<String, OpenSession> SESSIONS = new ConcurrentHashMap<>();
 	private static final List<Runnable> LISTENERS = new CopyOnWriteArrayList<>();
 
@@ -61,6 +64,18 @@ public final class SessionLaunchRegistry {
 		return secondaryId == null ? null : PROMPTS.remove(secondaryId);
 	}
 
+	/** Opens a chat view backed by an existing Cloud Agent. */
+	public static void putCloud(String secondaryId, CloudAgent agent) {
+		if (secondaryId != null && agent != null) {
+			CLOUD_SESSIONS.put(secondaryId, agent);
+		}
+	}
+
+	/** Returns and clears the Cloud Agent assigned to a newly opened chat view. */
+	public static CloudAgent takeCloud(String secondaryId) {
+		return secondaryId == null ? null : CLOUD_SESSIONS.remove(secondaryId);
+	}
+
 	public static void register(String secondaryId, String name, File root) {
 		String id = key(secondaryId);
 		SESSIONS.put(id, new OpenSession(id, secondaryId, name, root, null, "Disconnected"));
@@ -94,6 +109,7 @@ public final class SessionLaunchRegistry {
 			ROOTS.remove(secondaryId);
 			RESUMES.remove(secondaryId);
 			PROMPTS.remove(secondaryId);
+			CLOUD_SESSIONS.remove(secondaryId);
 		}
 		SESSIONS.remove(key(secondaryId));
 		fireChanged();

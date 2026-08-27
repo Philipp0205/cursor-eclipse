@@ -12,4 +12,5 @@ public final class PreferenceConstants {
 	public static final String API_KEY = CursorPlugin.PLUGIN_ID + ".apiKey";
 	public static final String DEFAULT_CWD = CursorPlugin.PLUGIN_ID + ".defaultCwd";
 	public static final String AUTO_START = CursorPlugin.PLUGIN_ID + ".autoStart";
+	public static final String SHOW_ARCHIVED_CLOUD_AGENTS = CursorPlugin.PLUGIN_ID + ".showArchivedCloudAgents";
 }

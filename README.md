@@ -23,7 +23,7 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 - Cursor questions, plan approval, todos, subagent, and generated-image notifications
 - Project/user `.cursor/mcp.json` discovery and ACP session configuration
 - Restorable sessions and composer-driven parallel agent views, with optional isolated Git worktrees
-- A searchable agents view over open chats, existing Cursor CLI chats, and status-grouped cloud agents
+- A searchable agents view over open chats, existing Cursor CLI chats, and repository-grouped cloud agents
 - Eclipse Git Staging review, embedded app preview, Cursor cloud dashboard, and `&` cloud handoff
 
 ## Prerequisites
@@ -83,8 +83,11 @@ while it is visible, or on demand with its refresh button:
   a chat view on that folder and replay the conversation through ACP
   `session/load`. Chats started in the Cursor desktop app are kept elsewhere and
   do not appear here.
-- **Cloud agents** — the Cloud Agents of the signed-in account, newest first.
-  Double-click one to open it on cursor.com. This list needs an API key from
+- **Cloud agents** — the Cloud Agents of the signed-in account, grouped by
+  repository and newest first within each folder. Double-click one to load its
+  conversation in an Eclipse Cursor chat, or use its context menu to open it on
+  cursor.com. Archived agents are hidden by default; enable **Show archived
+  cloud agents** in the view menu or Cursor preferences. This list needs an API key from
   [Cursor Dashboard → API Keys](https://cursor.com/dashboard/api) in
   **Preferences → Cursor** or in `CURSOR_API_KEY`, because `agent login` alone
   is not a REST credential.
