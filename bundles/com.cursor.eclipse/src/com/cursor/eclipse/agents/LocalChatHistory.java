@@ -30,6 +30,8 @@ public final class LocalChatHistory {
 	private static final int MAX_TITLE_LENGTH = 100;
 	private static final int MIN_RUN_LENGTH = 4;
 	private static final int DEFAULT_PAGE_SIZE = 4096;
+	private static final int LOG_HEADER_BYTES = 32;
+	private static final int FRAME_HEADER_BYTES = 24;
 	private static final String WORKSPACE_ANCHOR = "Workspace Path:";
 	private static final String SQLITE_MAGIC = "SQLite format 3";
 
@@ -76,24 +78,45 @@ public final class LocalChatHistory {
 			return null;
 		}
 		String id = directory.getFileName().toString();
-		Instant modified = Instant.EPOCH;
-		byte[] head = new byte[0];
-		try {
-			modified = Files.getLastModifiedTime(store).toInstant();
-			head = readHead(store);
-		} catch (IOException e) {
-			// A chat that is mid-write still deserves a row in the view.
-		}
+		byte[] head = readHead(store);
 		String workspace = workspaceOf(head);
 		String title = titleOf(head);
+		Instant modified = lastModified(store);
+
+		// A chat the CLI is still writing keeps its opening rows in the
+		// write-ahead log until SQLite checkpoints them into the store.
+		Path log = directory.resolve("store.db-wal");
+		if (Files.isRegularFile(log)) {
+			modified = latest(modified, lastModified(log));
+			if (workspace == null || title == null) {
+				byte[] pending = readHead(log);
+				workspace = workspace == null ? workspaceOf(pending) : workspace;
+				title = title == null ? titleOfLog(pending) : title;
+			}
+		}
 		return new LocalChat(id, workspace == null ? null : new File(workspace),
 				title == null ? shortId(id) : title, modified);
 	}
 
-	private static byte[] readHead(Path store) throws IOException {
-		try (InputStream in = Files.newInputStream(store)) {
+	private static byte[] readHead(Path file) {
+		try (InputStream in = Files.newInputStream(file)) {
 			return in.readNBytes(MAX_SCAN_BYTES);
+		} catch (IOException e) {
+			// A chat that is mid-write still deserves a row in the view.
+			return new byte[0];
 		}
+	}
+
+	private static Instant lastModified(Path file) {
+		try {
+			return Files.getLastModifiedTime(file).toInstant();
+		} catch (IOException e) {
+			return Instant.EPOCH;
+		}
+	}
+
+	private static Instant latest(Instant left, Instant right) {
+		return left.isAfter(right) ? left : right;
 	}
 
 	/** The folder a chat ran in, read from the workspace line the CLI stores. */
@@ -128,6 +151,35 @@ public final class LocalChatHistory {
 		for (int page = pageSize; page < store.length; page += pageSize) {
 			int end = Math.min(page + pageSize, store.length);
 			String candidate = lastCandidate(new String(store, page, end - page, StandardCharsets.ISO_8859_1));
+			if (candidate != null) {
+				return candidate;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * The same title, read from a write-ahead log.
+	 *
+	 * <p>A log is a header followed by frames, each one a frame header and a copy
+	 * of a page, written in the order the rows were committed.
+	 */
+	static String titleOfLog(byte[] log) {
+		if (log.length < LOG_HEADER_BYTES) {
+			return null;
+		}
+		int pageSize = readInt(log, 8);
+		if (pageSize < 512 || pageSize > 65536) {
+			return null;
+		}
+		int stride = FRAME_HEADER_BYTES + pageSize;
+		for (int frame = LOG_HEADER_BYTES; frame + stride <= log.length; frame += stride) {
+			// The frame header names the page it carries; page 1 is the schema.
+			if (readInt(log, frame) == 1) {
+				continue;
+			}
+			String candidate = lastCandidate(
+					new String(log, frame + FRAME_HEADER_BYTES, pageSize, StandardCharsets.ISO_8859_1));
 			if (candidate != null) {
 				return candidate;
 			}
@@ -186,6 +238,11 @@ public final class LocalChatHistory {
 			return 65536;
 		}
 		return declared < 512 ? DEFAULT_PAGE_SIZE : declared;
+	}
+
+	private static int readInt(byte[] bytes, int offset) {
+		return ((bytes[offset] & 0xff) << 24) | ((bytes[offset + 1] & 0xff) << 16) | ((bytes[offset + 2] & 0xff) << 8)
+				| (bytes[offset + 3] & 0xff);
 	}
 
 	private static boolean isTextByte(char value) {

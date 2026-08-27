@@ -69,6 +69,20 @@ public class LocalChatHistoryTest {
 	}
 
 	@Test
+	public void readsAChatThatIsStillOnlyInTheWriteAheadLog() throws IOException {
+		Path root = Files.createTempDirectory("cursor-chats");
+		Path chat = Files.createDirectory(root.resolve("55555555-eeee"));
+		Files.write(chat.resolve("store.db"), header());
+		Files.write(chat.resolve("store.db-wal"), log("Deploy the staging cluster", "/home/dev/live"));
+
+		List<LocalChat> chats = LocalChatHistory.read(root);
+
+		assertEquals(1, chats.size());
+		assertEquals("Deploy the staging cluster", chats.get(0).title());
+		assertEquals("/home/dev/live", chats.get(0).workspace().getAbsolutePath());
+	}
+
+	@Test
 	public void readsThePageSizeFromTheSqliteHeader() {
 		byte[] store = store("Prompt text here", "/tmp/x");
 
@@ -88,6 +102,37 @@ public class LocalChatHistoryTest {
 	 */
 	private static byte[] store(String prompt, String workspace) {
 		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		bytes.writeBytes(header());
+		bytes.writeBytes(dataPage(prompt, workspace));
+		return bytes.toByteArray();
+	}
+
+	/**
+	 * A write-ahead log the CLI has not checkpointed yet: the schema page first,
+	 * then the page that holds the conversation.
+	 */
+	private static byte[] log(String prompt, String workspace) {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		byte[] logHeader = new byte[32];
+		logHeader[10] = (byte) (PAGE_SIZE >> 8);
+		logHeader[11] = (byte) PAGE_SIZE;
+		bytes.writeBytes(logHeader);
+		bytes.writeBytes(frame(1, header()));
+		bytes.writeBytes(frame(2, dataPage(prompt, workspace)));
+		return bytes.toByteArray();
+	}
+
+	private static byte[] frame(int pageNumber, byte[] page) {
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		byte[] frameHeader = new byte[24];
+		frameHeader[2] = (byte) (pageNumber >> 8);
+		frameHeader[3] = (byte) pageNumber;
+		bytes.writeBytes(frameHeader);
+		bytes.writeBytes(page);
+		return bytes.toByteArray();
+	}
+
+	private static byte[] header() {
 		byte[] header = new byte[PAGE_SIZE];
 		byte[] magic = "SQLite format 3\u0000".getBytes(StandardCharsets.ISO_8859_1);
 		System.arraycopy(magic, 0, header, 0, magic.length);
@@ -96,15 +141,17 @@ public class LocalChatHistoryTest {
 		byte[] schema = "CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)"
 				.getBytes(StandardCharsets.ISO_8859_1);
 		System.arraycopy(schema, 0, header, 100, schema.length);
-		bytes.writeBytes(header);
+		return header;
+	}
 
+	/** The context blob first, then the opening prompt at a higher offset. */
+	private static byte[] dataPage(String prompt, String workspace) {
 		byte[] page = new byte[PAGE_SIZE];
 		byte[] context = ("<user_info>\\nWorkspace Path: " + workspace + "\\nShell: bash\\n</user_info>")
 				.getBytes(StandardCharsets.UTF_8);
 		System.arraycopy(context, 0, page, 512, context.length);
 		byte[] first = ("\u0007" + prompt + "\u0000").getBytes(StandardCharsets.UTF_8);
 		System.arraycopy(first, 0, page, PAGE_SIZE - first.length - 8, first.length);
-		bytes.writeBytes(page);
-		return bytes.toByteArray();
+		return page;
 	}
 }
