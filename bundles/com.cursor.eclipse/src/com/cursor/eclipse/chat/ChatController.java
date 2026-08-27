@@ -37,6 +37,7 @@ final class ChatController implements SessionListener {
 
 	private final StringBuilder assistantText = new StringBuilder();
 	private final StringBuilder thoughtText = new StringBuilder();
+	private final StringBuilder userText = new StringBuilder();
 	private final AtomicBoolean flushScheduled = new AtomicBoolean();
 	private final AtomicInteger turn = new AtomicInteger();
 	private final AtomicReference<String> pendingStatus = new AtomicReference<>();
@@ -71,6 +72,8 @@ final class ChatController implements SessionListener {
 			return;
 		}
 		busy = true;
+		// A replay leaves its last turn buffered, and none of it belongs here.
+		clearBuffers();
 		int current = turn.incrementAndGet();
 		String userId = "user-" + current;
 		view.putBlock(userId, ConversationHtml.message(userId, "user", displayText));
@@ -84,6 +87,7 @@ final class ChatController implements SessionListener {
 					view.refreshState("Starting Cursor agent");
 					session.start(LaunchFactory.fromPreferences(workingDirectory));
 				}
+				view.refreshState("Working");
 				String stop = session.prompt(prompt);
 				finishTurn(current, stopLabel(stop));
 			} catch (Exception e) {
@@ -108,6 +112,7 @@ final class ChatController implements SessionListener {
 	void newSession(File workingDirectory) {
 		worker("cursor-new-session", () -> {
 			try {
+				clearBuffers();
 				if (!session.isConnected()) {
 					connecting = true;
 					session.start(LaunchFactory.fromPreferences(workingDirectory));
@@ -129,6 +134,8 @@ final class ChatController implements SessionListener {
 	void loadSession(String sessionId, File workingDirectory) {
 		worker("cursor-load-session", () -> {
 			try {
+				clearBuffers();
+				turn.set(0);
 				view.clearConversationBeforeReplay();
 				if (!session.isConnected()) {
 					connecting = true;
@@ -205,7 +212,7 @@ final class ChatController implements SessionListener {
 		view.ui(() -> {
 			view.setSessionId(sessionId);
 			view.setModes(modes, currentModeId);
-			view.refreshState("Ready");
+			view.refreshState(busy ? "Working" : "Ready");
 		});
 	}
 
@@ -236,6 +243,23 @@ final class ChatController implements SessionListener {
 	public void onAgentThought(String text) {
 		synchronized (thoughtText) {
 			thoughtText.append(text);
+		}
+		scheduleFlush();
+	}
+
+	/**
+	 * A replayed prompt. Anything already buffered belongs to the turn before it,
+	 * so that turn is written out and the counter moves on.
+	 */
+	@Override
+	public void onUserText(String text) {
+		if (buffered(assistantText) || buffered(thoughtText)) {
+			flush();
+			clearBuffers();
+			turn.incrementAndGet();
+		}
+		synchronized (userText) {
+			userText.append(text);
 		}
 		scheduleFlush();
 	}
@@ -362,6 +386,14 @@ final class ChatController implements SessionListener {
 
 	private void flush() {
 		int current = turn.get();
+		String prompt;
+		synchronized (userText) {
+			prompt = userText.toString();
+		}
+		if (!prompt.isEmpty()) {
+			String id = "user-" + current;
+			view.putBlock(id, ConversationHtml.message(id, "user", prompt));
+		}
 		String thought;
 		synchronized (thoughtText) {
 			thought = thoughtText.toString();
@@ -383,16 +415,29 @@ final class ChatController implements SessionListener {
 
 	private void finishTurn(int current, String status) {
 		flush();
+		clearBuffers();
+		busy = false;
+		pendingStatus.set(status);
+		view.removeBlock(activityId(current));
+		view.refreshState(status);
+	}
+
+	private void clearBuffers() {
 		synchronized (assistantText) {
 			assistantText.setLength(0);
 		}
 		synchronized (thoughtText) {
 			thoughtText.setLength(0);
 		}
-		busy = false;
-		pendingStatus.set(status);
-		view.removeBlock(activityId(current));
-		view.refreshState(status);
+		synchronized (userText) {
+			userText.setLength(0);
+		}
+	}
+
+	private static boolean buffered(StringBuilder text) {
+		synchronized (text) {
+			return text.length() > 0;
+		}
 	}
 
 	private void reportError(Exception e) {

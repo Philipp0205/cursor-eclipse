@@ -82,7 +82,7 @@ Auth (in preference order):
 ### Explicit non-goals for v1
 
 - Ghost-text / NES completions (needs a different Cursor API than ACP)
-- Cloud Agents dashboard / PR lifecycle
+- Cloud Agents beyond listing them read-only and opening them on cursor.com (no launching, follow-ups, or PR lifecycle)
 - Reimplementing Copilot-for-Eclipse
 - Shipping or vendoring the Cursor CLI binary
 - Depending on `org.eclipse.agents` at runtime (that project is pre-release). We **copy patterns**, not fork IBM/EPL code unless we later choose a dual-plugin strategy
@@ -109,6 +109,7 @@ Bundle internals (mirroring a typical OpenCode Eclipse plugin / eclipse-agents s
 com.cursor.eclipse
   acp/          JSON-RPC framing, request map, session API
   agent/        Process spawn, env, auth, lifecycle jobs
+  agents/       Agents view over open, local CLI, and cloud agents
   chat/         ChatView, markdown/HTML renderer, tool-call chips
   editor/       Read/write IFile, dirty buffer, refresh, compare
   permissions/  session/request_permission UI

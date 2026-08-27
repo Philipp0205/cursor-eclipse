@@ -13,14 +13,17 @@ public final class SessionUpdates {
 
 	public static String agentTextChunk(JsonObject params) {
 		JsonObject update = updateObject(params);
-		if (update == null) {
-			return null;
-		}
-		String kind = text(update, "sessionUpdate");
+		String kind = update == null ? null : text(update, "sessionUpdate");
 		if (!"agent_message_chunk".equals(kind) && !"agent_thought_chunk".equals(kind)) {
 			return null;
 		}
-		if (!update.has("content") || !update.get("content").isJsonObject()) {
+		return chunkText(params);
+	}
+
+	/** The text of a message chunk, whichever side of the conversation sent it. */
+	public static String chunkText(JsonObject params) {
+		JsonObject update = updateObject(params);
+		if (update == null || !update.has("content") || !update.get("content").isJsonObject()) {
 			return null;
 		}
 		JsonObject content = update.getAsJsonObject("content");

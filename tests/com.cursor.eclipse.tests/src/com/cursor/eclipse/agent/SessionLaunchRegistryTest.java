@@ -37,6 +37,22 @@ public class SessionLaunchRegistryTest {
 	}
 
 	@Test
+	public void handsLaunchDetailsToANewAgentExactlyOnce() {
+		File worktree = new File("/tmp/worktree");
+		SessionLaunchRegistry.put(SECONDARY_ID, worktree);
+		SessionLaunchRegistry.putResume(SECONDARY_ID, "session-42");
+		SessionLaunchRegistry.putPrompt(SECONDARY_ID, "Compare both implementations", true);
+
+		assertEquals(worktree, SessionLaunchRegistry.get(SECONDARY_ID));
+		assertEquals("session-42", SessionLaunchRegistry.takeResume(SECONDARY_ID));
+		assertNull(SessionLaunchRegistry.takeResume(SECONDARY_ID));
+		SessionLaunchRegistry.PendingPrompt prompt = SessionLaunchRegistry.takePrompt(SECONDARY_ID);
+		assertEquals("Compare both implementations", prompt.text());
+		assertTrue(prompt.inCloud());
+		assertNull(SessionLaunchRegistry.takePrompt(SECONDARY_ID));
+	}
+
+	@Test
 	public void notifiesListenersAndRemovesClosedViews() {
 		AtomicInteger changes = new AtomicInteger();
 		Runnable listener = changes::incrementAndGet;

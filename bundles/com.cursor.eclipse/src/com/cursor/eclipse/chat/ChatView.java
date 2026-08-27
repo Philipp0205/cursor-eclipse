@@ -31,6 +31,7 @@ import com.cursor.eclipse.CursorPlugin;
 import com.cursor.eclipse.agent.SessionMode;
 import com.cursor.eclipse.agent.SessionModel;
 import com.cursor.eclipse.agent.SessionLaunchRegistry;
+import com.cursor.eclipse.agent.SessionLaunchRegistry.PendingPrompt;
 import com.cursor.eclipse.workspace.PromptContext;
 import com.cursor.eclipse.prefs.PreferenceConstants;
 import com.google.gson.JsonArray;
@@ -49,6 +50,7 @@ public class ChatView extends ViewPart {
 	private static final int INPUT_MIN_HEIGHT = 56;
 	private static final int INPUT_MAX_HEIGHT = 180;
 	private static final String MEMENTO_SESSION_ROOT = "cursorSessionRoot";
+	private static final String MEMENTO_SESSION_ID = "cursorSessionId";
 
 	private ConversationBrowser conversation;
 	private Text input;
@@ -62,6 +64,7 @@ public class ChatView extends ViewPart {
 	private Composite statusRow;
 	private ChatController controller;
 	private File sessionRoot;
+	private String sessionId;
 
 	private List<SessionMode> modes = List.of();
 	private List<SessionModel> models = List.of();
@@ -96,8 +99,26 @@ public class ChatView extends ViewPart {
 		setPartName(secondaryId == null ? "Cursor Chat" : "Cursor: " + viewName);
 		SessionLaunchRegistry.register(secondaryId, viewName, sessionRoot);
 		refreshState("Disconnected");
-		if (CursorPlugin.getDefault().getPreferenceStore().getBoolean(PreferenceConstants.AUTO_START)) {
-			controller.connect(workingDirectory());
+		String resume = SessionLaunchRegistry.takeResume(secondaryId);
+		if (resume == null) {
+			resume = sessionId;
+		}
+		if (resume != null) {
+			controller.loadSession(resume, workingDirectory());
+		} else {
+			PendingPrompt pending = SessionLaunchRegistry.takePrompt(secondaryId);
+			if (pending != null) {
+				input.setText(pending.text());
+				input.getDisplay().asyncExec(() -> {
+					if (!input.isDisposed()) {
+						sendPrompt(pending.inCloud());
+					}
+				});
+				return;
+			}
+			if (CursorPlugin.getDefault().getPreferenceStore().getBoolean(PreferenceConstants.AUTO_START)) {
+				controller.connect(workingDirectory());
+			}
 		}
 	}
 
@@ -109,6 +130,7 @@ public class ChatView extends ViewPart {
 			if (root != null && new File(root).isDirectory()) {
 				sessionRoot = new File(root);
 			}
+			sessionId = memento.getString(MEMENTO_SESSION_ID);
 		}
 	}
 
@@ -116,6 +138,9 @@ public class ChatView extends ViewPart {
 	public void saveState(IMemento memento) {
 		if (sessionRoot != null) {
 			memento.putString(MEMENTO_SESSION_ROOT, sessionRoot.getAbsolutePath());
+		}
+		if (sessionId != null && !sessionId.isBlank()) {
+			memento.putString(MEMENTO_SESSION_ID, sessionId);
 		}
 		super.saveState(memento);
 	}
@@ -417,7 +442,8 @@ public class ChatView extends ViewPart {
 	}
 
 	void setSessionId(String sessionId) {
-		SessionLaunchRegistry.update(getViewSite().getSecondaryId(), sessionId, "Ready");
+		this.sessionId = sessionId;
+		SessionLaunchRegistry.update(getViewSite().getSecondaryId(), sessionId, null);
 	}
 
 	void selectModel(String modelId) {
