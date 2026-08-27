@@ -26,9 +26,11 @@ import org.eclipse.swt.SWT;
 import org.eclipse.swt.dnd.Clipboard;
 import org.eclipse.swt.dnd.TextTransfer;
 import org.eclipse.swt.dnd.Transfer;
-import org.eclipse.swt.layout.FillLayout;
+import org.eclipse.swt.layout.GridData;
+import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.PlatformUI;
@@ -60,6 +62,7 @@ public final class AgentsView extends ViewPart {
 	private static final int EXPAND_LEVELS = 3;
 
 	private TreeViewer viewer;
+	private Text search;
 	private final Runnable registryListener = this::scheduleRefresh;
 	private final AtomicInteger refreshes = new AtomicInteger();
 
@@ -70,8 +73,17 @@ public final class AgentsView extends ViewPart {
 
 	@Override
 	public void createPartControl(Composite parent) {
-		parent.setLayout(new FillLayout());
+		GridLayout layout = new GridLayout(1, false);
+		layout.marginHeight = 6;
+		layout.marginWidth = 6;
+		layout.verticalSpacing = 5;
+		parent.setLayout(layout);
+		search = new Text(parent, SWT.SEARCH | SWT.ICON_SEARCH | SWT.ICON_CANCEL);
+		search.setMessage("Search agents");
+		search.setToolTipText("Filter by agent name, folder, status, branch, repository, or ID");
+		search.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
 		viewer = new TreeViewer(parent, SWT.SINGLE | SWT.H_SCROLL | SWT.V_SCROLL);
+		viewer.getControl().setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 		viewer.setContentProvider(new AgentsContentProvider());
 		viewer.setLabelProvider(new AgentsLabelProvider());
 		// Without this the label provider's tooltips are never shown.
@@ -82,6 +94,10 @@ public final class AgentsView extends ViewPart {
 			if (event.getSelection() instanceof StructuredSelection selection) {
 				open(selection.getFirstElement());
 			}
+		});
+		search.addModifyListener(event -> {
+			viewer.refresh();
+			viewer.expandToLevel(EXPAND_LEVELS);
 		});
 		createContextMenu();
 		SessionLaunchRegistry.addListener(registryListener);
@@ -296,8 +312,8 @@ public final class AgentsView extends ViewPart {
 
 	@Override
 	public void setFocus() {
-		if (viewer != null && !viewer.getControl().isDisposed()) {
-			viewer.getControl().setFocus();
+		if (search != null && !search.isDisposed()) {
+			search.setFocus();
 		}
 	}
 
@@ -322,15 +338,80 @@ public final class AgentsView extends ViewPart {
 	private record FolderNode(File folder, List<Object> children) {
 	}
 
+	private record GroupNode(String label, List<Object> children) {
+	}
+
 	private List<Object> categories() {
+		List<OpenSession> open = SessionLaunchRegistry.sessions().stream().filter(this::matches).toList();
+		List<LocalChat> local = localChats.stream().filter(this::matches).toList();
+		List<CloudAgent> cloud = cloudAgents.stream().filter(this::matches).toList();
+		boolean filtering = !query().isEmpty();
 		List<Object> categories = new ArrayList<>();
-		categories.add(new Category("Open in Eclipse", byFolder(SessionLaunchRegistry.sessions(),
-				OpenSession::root, Comparator.comparing(OpenSession::name))));
+		categories.add(new Category("Open in Eclipse",
+				byFolder(open, OpenSession::root, Comparator.comparing(OpenSession::name))));
 		categories.add(new Category("Local chats",
-				withNote(byFolder(localChats, chat -> chat.workspace() == null ? unknownFolder() : chat.workspace(),
-						Comparator.comparing(LocalChat::modified).reversed()), localNote)));
-		categories.add(new Category("Cloud agents", withNote(new ArrayList<Object>(cloudAgents), cloudNote)));
+				withNote(byFolder(local, chat -> chat.workspace() == null ? unknownFolder() : chat.workspace(),
+						Comparator.comparing(LocalChat::modified).reversed()), filtering ? null : localNote)));
+		categories.add(new Category("Cloud agents",
+				withNote(byCloudStatus(cloud), filtering ? null : cloudNote)));
 		return categories;
+	}
+
+	private String query() {
+		return search == null || search.isDisposed() ? "" : search.getText().trim().toLowerCase(Locale.ROOT);
+	}
+
+	private boolean matches(OpenSession session) {
+		return matches(session.name(), session.status(), session.sessionId(), session.root().getAbsolutePath());
+	}
+
+	private boolean matches(LocalChat chat) {
+		return matches(chat.title(), chat.id(), chat.workspace() == null ? null : chat.workspace().getAbsolutePath());
+	}
+
+	private boolean matches(CloudAgent agent) {
+		return matches(agent.name(), agent.id(), agent.status(), agent.repository());
+	}
+
+	private boolean matches(String... values) {
+		String query = query();
+		if (query.isEmpty()) {
+			return true;
+		}
+		for (String value : values) {
+			if (value != null && value.toLowerCase(Locale.ROOT).contains(query)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static List<Object> byCloudStatus(List<CloudAgent> agents) {
+		Map<String, List<Object>> groups = new LinkedHashMap<>();
+		groups.put("In progress", new ArrayList<>());
+		groups.put("Needs attention", new ArrayList<>());
+		groups.put("Done", new ArrayList<>());
+		for (CloudAgent agent : agents) {
+			groups.get(cloudGroup(agent.status())).add(agent);
+		}
+		List<Object> result = new ArrayList<>();
+		groups.forEach((label, children) -> {
+			if (!children.isEmpty()) {
+				result.add(new GroupNode(label, children));
+			}
+		});
+		return result;
+	}
+
+	private static String cloudGroup(String status) {
+		String value = status == null ? "" : status.toUpperCase(Locale.ROOT);
+		if (value.contains("ACTIVE") || value.contains("RUNNING") || value.contains("CREATING")) {
+			return "In progress";
+		}
+		if (value.contains("ERROR") || value.contains("FAIL") || value.contains("ATTENTION")) {
+			return "Needs attention";
+		}
+		return "Done";
 	}
 
 	private static List<Object> withNote(List<Object> children, Note note) {
@@ -372,6 +453,9 @@ public final class AgentsView extends ViewPart {
 			if (parentElement instanceof FolderNode folder) {
 				return folder.children().toArray();
 			}
+			if (parentElement instanceof GroupNode group) {
+				return group.children().toArray();
+			}
 			return new Object[0];
 		}
 
@@ -396,6 +480,9 @@ public final class AgentsView extends ViewPart {
 			if (element instanceof FolderNode folder) {
 				String name = folder.folder().getName();
 				return name.isBlank() ? folder.folder().getAbsolutePath() : name;
+			}
+			if (element instanceof GroupNode group) {
+				return group.label() + " (" + group.children().size() + ")";
 			}
 			if (element instanceof OpenSession session) {
 				return session.name() + "  \u00b7  " + session.status();
@@ -444,6 +531,8 @@ public final class AgentsView extends ViewPart {
 			for (Object child : category.children()) {
 				if (child instanceof FolderNode folder) {
 					total += folder.children().size();
+				} else if (child instanceof GroupNode group) {
+					total += group.children().size();
 				} else if (!(child instanceof Note)) {
 					total++;
 				}

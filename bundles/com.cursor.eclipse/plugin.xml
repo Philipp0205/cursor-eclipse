@@ -80,6 +80,10 @@
 			id="com.cursor.eclipse.commands.refreshAgents"
 			name="Refresh Cursor Agents"
 			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.focusAgents"
+			name="Focus Cursor Agents"
+			categoryId="com.cursor.eclipse.commands.category"/>
 	</extension>
 
 	<extension point="org.eclipse.ui.handlers">
@@ -116,6 +120,20 @@
 		<handler
 			commandId="com.cursor.eclipse.commands.refreshAgents"
 			class="com.cursor.eclipse.chat.handlers.RefreshAgentsHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.focusAgents"
+			class="com.cursor.eclipse.chat.handlers.FocusAgentsHandler"/>
+	</extension>
+
+	<extension point="org.eclipse.ui.bindings">
+		<key
+			commandId="com.cursor.eclipse.commands.focusAgents"
+			schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+			sequence="M1+M3+J"/>
+		<key
+			commandId="com.cursor.eclipse.commands.newAgent"
+			schemeId="org.eclipse.ui.defaultAcceleratorConfiguration"
+			sequence="M1+M3+N"/>
 	</extension>
 
 	<extension point="org.eclipse.ui.menus">
