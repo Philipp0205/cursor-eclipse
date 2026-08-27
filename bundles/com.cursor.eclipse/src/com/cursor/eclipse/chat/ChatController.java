@@ -72,6 +72,8 @@ final class ChatController implements SessionListener {
 			return;
 		}
 		busy = true;
+		// A replay leaves its last turn buffered, and none of it belongs here.
+		clearBuffers();
 		int current = turn.incrementAndGet();
 		String userId = "user-" + current;
 		view.putBlock(userId, ConversationHtml.message(userId, "user", displayText));
@@ -109,6 +111,7 @@ final class ChatController implements SessionListener {
 	void newSession(File workingDirectory) {
 		worker("cursor-new-session", () -> {
 			try {
+				clearBuffers();
 				if (!session.isConnected()) {
 					connecting = true;
 					session.start(LaunchFactory.fromPreferences(workingDirectory));
