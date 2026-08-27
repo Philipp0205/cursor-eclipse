@@ -96,7 +96,10 @@ public class ChatView extends ViewPart {
 		setPartName(secondaryId == null ? "Cursor Chat" : "Cursor: " + viewName);
 		SessionLaunchRegistry.register(secondaryId, viewName, sessionRoot);
 		refreshState("Disconnected");
-		if (CursorPlugin.getDefault().getPreferenceStore().getBoolean(PreferenceConstants.AUTO_START)) {
+		String resume = SessionLaunchRegistry.takeResume(secondaryId);
+		if (resume != null) {
+			controller.loadSession(resume, workingDirectory());
+		} else if (CursorPlugin.getDefault().getPreferenceStore().getBoolean(PreferenceConstants.AUTO_START)) {
 			controller.connect(workingDirectory());
 		}
 	}

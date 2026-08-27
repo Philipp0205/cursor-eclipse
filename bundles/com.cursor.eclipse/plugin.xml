@@ -76,6 +76,10 @@
 			id="com.cursor.eclipse.commands.login"
 			name="Sign in to Cursor"
 			categoryId="com.cursor.eclipse.commands.category"/>
+		<command
+			id="com.cursor.eclipse.commands.refreshAgents"
+			name="Refresh Cursor Agents"
+			categoryId="com.cursor.eclipse.commands.category"/>
 	</extension>
 
 	<extension point="org.eclipse.ui.handlers">
@@ -109,6 +113,9 @@
 		<handler
 			commandId="com.cursor.eclipse.commands.login"
 			class="com.cursor.eclipse.chat.handlers.LoginHandler"/>
+		<handler
+			commandId="com.cursor.eclipse.commands.refreshAgents"
+			class="com.cursor.eclipse.chat.handlers.RefreshAgentsHandler"/>
 	</extension>
 
 	<extension point="org.eclipse.ui.menus">
@@ -164,6 +171,26 @@
 				commandId="com.cursor.eclipse.commands.newAgent"
 				icon="icons/new-session.png"
 				tooltip="Open a new Cursor agent"
+				style="push"/>
+			<command
+				commandId="com.cursor.eclipse.commands.refreshAgents"
+				icon="icons/refresh.png"
+				tooltip="Reload local chats and cloud agents"
+				style="push"/>
+		</menuContribution>
+		<menuContribution locationURI="menu:com.cursor.eclipse.agents.AgentsView">
+			<command
+				commandId="com.cursor.eclipse.commands.refreshAgents"
+				label="Refresh"
+				style="push"/>
+			<command
+				commandId="com.cursor.eclipse.commands.openAgentsDashboard"
+				label="Open cloud agents on cursor.com..."
+				style="push"/>
+			<separator name="cursor.agents.separator" visible="true"/>
+			<command
+				commandId="com.cursor.eclipse.commands.openPreferences"
+				label="Preferences"
 				style="push"/>
 		</menuContribution>
 	</extension>
