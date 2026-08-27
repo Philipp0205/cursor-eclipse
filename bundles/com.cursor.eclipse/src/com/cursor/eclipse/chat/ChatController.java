@@ -87,6 +87,7 @@ final class ChatController implements SessionListener {
 					view.refreshState("Starting Cursor agent");
 					session.start(LaunchFactory.fromPreferences(workingDirectory));
 				}
+				view.refreshState("Working");
 				String stop = session.prompt(prompt);
 				finishTurn(current, stopLabel(stop));
 			} catch (Exception e) {
