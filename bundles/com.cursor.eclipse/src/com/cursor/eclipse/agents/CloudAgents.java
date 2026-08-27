@@ -87,7 +87,7 @@ public final class CloudAgents {
 				int pageSize = Math.min(PAGE_SIZE, limit - agents.size());
 				String url = API + "/v1/agents?limit=" + pageSize + "&includeArchived=" + includeArchived
 						+ (cursor == null ? "" : "&cursor=" + encode(cursor));
-				String body = get(client, apiKey, url);
+				String body = get(client, apiKey, url, true);
 				agents.addAll(enrich(client, apiKey, parse(body)));
 				String next = nextCursor(body);
 				cursor = next != null && cursors.add(next) ? next : null;
@@ -95,15 +95,20 @@ public final class CloudAgents {
 			return List.copyOf(agents.size() <= limit ? agents : agents.subList(0, limit));
 		} catch (FallbackException e) {
 			// Keys issued before the v1 beta only answer on the legacy endpoint.
-			return parse(get(client, apiKey, API + "/v0/agents?limit=" + Math.min(PAGE_SIZE, limit)));
+			return legacyList(client, apiKey, limit, includeArchived);
 		}
 	}
 
 	private static String get(HttpClient client, String apiKey, String url) throws IOException, InterruptedException {
+		return get(client, apiKey, url, false);
+	}
+
+	private static String get(HttpClient client, String apiKey, String url, boolean allowFallback)
+			throws IOException, InterruptedException {
 		HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(REQUEST_TIMEOUT)
 				.header("Authorization", authorization(apiKey)).header("Accept", "application/json").GET().build();
 		HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-		return body(response);
+		return body(response, allowFallback);
 	}
 
 	private static String post(HttpClient client, String apiKey, String url, String json)
@@ -111,10 +116,10 @@ public final class CloudAgents {
 		HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(REQUEST_TIMEOUT)
 				.header("Authorization", authorization(apiKey)).header("Accept", "application/json")
 				.header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(json)).build();
-		return body(client.send(request, HttpResponse.BodyHandlers.ofString()));
+		return body(client.send(request, HttpResponse.BodyHandlers.ofString()), false);
 	}
 
-	private static String body(HttpResponse<String> response) throws IOException {
+	private static String body(HttpResponse<String> response, boolean allowFallback) throws IOException {
 		int status = response.statusCode();
 		if (status >= 200 && status < 300) {
 			return response.body();
@@ -122,7 +127,7 @@ public final class CloudAgents {
 		if (status == 401 || status == 403) {
 			throw new NotAuthorizedException("Cursor rejected the API key (HTTP " + status + ")");
 		}
-		if (status == 404 || status == 501) {
+		if (allowFallback && (status == 404 || status == 501)) {
 			throw new FallbackException();
 		}
 		throw new IOException("Cursor API returned HTTP " + status + errorSuffix(response.body()));
@@ -151,6 +156,27 @@ public final class CloudAgents {
 		} catch (RuntimeException e) {
 			return null;
 		}
+	}
+
+	private static List<CloudAgent> legacyList(HttpClient client, String apiKey, int limit, boolean includeArchived)
+			throws IOException, InterruptedException {
+		List<CloudAgent> agents = new ArrayList<>();
+		Set<String> cursors = new HashSet<>();
+		String cursor = null;
+		do {
+			int pageSize = Math.min(PAGE_SIZE, limit - agents.size());
+			String url = API + "/v0/agents?limit=" + pageSize
+					+ (cursor == null ? "" : "&cursor=" + encode(cursor));
+			String body = get(client, apiKey, url);
+			parse(body).stream().filter(agent -> includeArchived || !archived(agent)).forEach(agents::add);
+			String next = nextCursor(body);
+			cursor = next != null && cursors.add(next) ? next : null;
+		} while (cursor != null && agents.size() < limit);
+		return List.copyOf(agents.size() <= limit ? agents : agents.subList(0, limit));
+	}
+
+	private static boolean archived(CloudAgent agent) {
+		return agent.status() != null && agent.status().toUpperCase(java.util.Locale.ROOT).contains("ARCHIVED");
 	}
 
 	private static List<CloudAgent> enrich(HttpClient client, String apiKey, List<CloudAgent> agents)
@@ -238,7 +264,7 @@ public final class CloudAgents {
 
 	public record CloudRun(String status, String result) {
 		public boolean terminal() {
-			String value = status == null ? "" : status.toUpperCase();
+			String value = status == null ? "" : status.toUpperCase(java.util.Locale.ROOT);
 			return value.equals("FINISHED") || value.equals("ERROR") || value.equals("CANCELLED")
 					|| value.equals("EXPIRED");
 		}
