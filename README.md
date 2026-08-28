@@ -179,5 +179,11 @@ version breaks their install instead of upgrading it. The trade-off is that
 `p2/` grows by one feature and one bundle jar per published build; publish only
 on tags if that becomes unwelcome.
 
-The publish commit touches only `p2/`, which the workflow's `paths-ignore`
-excludes, so publishing never retriggers the workflow.
+The publish job also stamps the landing page and `p2/index.html` with the
+publish time, the commit they were built from, and the published feature
+version, so <https://philipp0205.github.io/cursor-eclipse/> shows whether a
+change has rolled out yet. `releng/stamp-published.sh` rewrites only the region
+between the `published:begin` and `published:end` markers.
+
+The publish commit touches only `p2/` and `index.html`, which the workflow's
+`paths-ignore` excludes, so publishing never retriggers the workflow.
