@@ -66,7 +66,8 @@ public final class ConversationHtml {
 				+ "<span class=\"tool-icon\" aria-hidden=\"true\">" + icon(call.kind(), status) + "</span>"
 				+ "<span class=\"tool-title\">" + MarkdownHtml.escape(title) + "</span>"
 				+ (call.detail() == null ? ""
-						: "<span class=\"tool-detail\">" + MarkdownHtml.escape(call.detail()) + "</span>")
+						: "<details class=\"tool-detail\"><summary>Show details</summary><pre><code>"
+								+ MarkdownHtml.escape(call.detail()) + "</code></pre></details>")
 				+ "<span class=\"tool-status\">" + MarkdownHtml.escape(status) + "</span></div>";
 	}
 

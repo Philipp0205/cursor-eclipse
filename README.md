@@ -15,8 +15,9 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 ## Features
 
 - Streaming Cursor Agent chat with new sessions in the same CLI process
-- Agent, Plan, and Ask modes plus model selection when advertised by Cursor
-- Tool progress and explicit permission choices
+- Agent, Plan, and Ask modes plus model selection when advertised by Cursor;
+  Cloud Agent follow-ups support Agent and Plan
+- Tool progress, commands, command output, file-change details, and explicit permission choices
 - Workspace-confined ACP reads/writes and IDE-managed terminal commands
 - Dirty editor contents included in reads; writes preserve local history and run builders
 - Active editor, text selection, problem markers, selected resources, and explicit file attachments
@@ -25,6 +26,7 @@ Cursor, OpenCode, Gemini CLI, and others all speak ACP. This plugin does **not**
 - Restorable sessions and composer-driven parallel agent views, with optional isolated Git worktrees
 - A searchable agents view over open chats, existing Cursor CLI chats, and repository-grouped cloud agents
 - Eclipse Git Staging review, embedded app preview, Cursor cloud dashboard, and `&` cloud handoff
+- Serial follow-up queue for a Cloud Agent while its current run is working
 
 ## Prerequisites
 
@@ -79,18 +81,27 @@ while it is visible, or on demand with its refresh button:
 - **Open in Eclipse** — the chat views of this workbench, grouped by working
   folder, with each session's live state. Double-click one to bring it forward.
 - **Local chats** — the chats the Cursor CLI already stored under
-  `~/.cursor/chats`, grouped by the folder they ran in. Double-click one to open
-  a chat view on that folder and replay the conversation through ACP
+  its `chats` and `acp-sessions` roots (including `CURSOR_CONFIG_DIR` and XDG
+  locations), grouped by the folder they ran in. Double-click one to open a
+  chat view on that folder and replay the conversation through ACP
   `session/load`. Chats started in the Cursor desktop app are kept elsewhere and
   do not appear here.
 - **Cloud agents** — the Cloud Agents of the signed-in account, grouped by
-  repository and newest first within each folder. Double-click one to load its
+  repository name and newest first within each folder. Double-click one to load its
   conversation in an Eclipse Cursor chat, or use its context menu to open it on
   cursor.com. Archived agents are hidden by default; enable **Show archived
   cloud agents** in the view menu or Cursor preferences. This list needs an API key from
   [Cursor Dashboard → API Keys](https://cursor.com/dashboard/api) in
   **Preferences → Cursor** or in `CURSOR_API_KEY`, because `agent login` alone
   is not a REST credential.
+
+Running, completed, failed, and disconnected sessions have a status symbol
+before their title. Right-click a local repository folder to start an agent in
+that folder, or a cloud repository to create a Cloud Agent for that repository.
+While a Cloud Agent is working, type another message and press **Queue** to run
+it next. The commands menu includes `/multitask` for local agents; Cursor's
+public Cloud Agent API currently supports serial Agent and Plan runs, not cloud
+multitask mode or changing the model of an existing conversation.
 
 Use the view's toolbar button, **Ctrl+Alt+N**, or **New Parallel Cursor Agent**
 in the chat toolbar to open the New Agent composer. It accepts a name, initial
@@ -168,5 +179,11 @@ version breaks their install instead of upgrading it. The trade-off is that
 `p2/` grows by one feature and one bundle jar per published build; publish only
 on tags if that becomes unwelcome.
 
-The publish commit touches only `p2/`, which the workflow's `paths-ignore`
-excludes, so publishing never retriggers the workflow.
+The publish job also stamps the landing page and `p2/index.html` with the
+publish time, the commit they were built from, and the published feature
+version, so <https://philipp0205.github.io/cursor-eclipse/> shows whether a
+change has rolled out yet. `releng/stamp-published.sh` rewrites only the region
+between the `published:begin` and `published:end` markers.
+
+The publish commit touches only `p2/` and `index.html`, which the workflow's
+`paths-ignore` excludes, so publishing never retriggers the workflow.

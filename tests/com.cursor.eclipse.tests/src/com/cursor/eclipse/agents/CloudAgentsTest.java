@@ -95,9 +95,27 @@ public class CloudAgentsTest {
 
 	@Test
 	public void usesRepositoryOwnerAndNameAsTheCloudFolder() {
-		assertEquals("acme/payments",
+		assertEquals("payments",
 				AgentsView.repositoryLabel("https://github.com/acme/payments.git"));
 		assertEquals("No repository", AgentsView.repositoryLabel(null));
+	}
+
+	@Test
+	public void readsCloudToolCommandsAndResults() {
+		CloudToolCall call = CloudAgents.parseToolCall("""
+				{
+				  "callId":"call-1",
+				  "name":"run_terminal_cmd",
+				  "status":"completed",
+				  "args":{"command":"mvn test"},
+				  "result":{"success":{"output":"BUILD SUCCESS"}}
+				}
+				""");
+
+		assertEquals("call-1", call.id());
+		assertEquals("execute", call.kind());
+		assertTrue(call.detail().contains("mvn test"));
+		assertTrue(call.detail().contains("BUILD SUCCESS"));
 	}
 
 	@Test

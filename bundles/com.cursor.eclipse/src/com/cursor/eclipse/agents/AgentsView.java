@@ -17,6 +17,8 @@ import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.action.MenuManager;
 import org.eclipse.jface.action.Separator;
+import org.eclipse.jface.dialogs.InputDialog;
+import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.viewers.ColumnLabelProvider;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
 import org.eclipse.jface.viewers.ITreeContentProvider;
@@ -31,6 +33,7 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.jface.window.Window;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.IViewReference;
 import org.eclipse.ui.PartInitException;
@@ -43,6 +46,7 @@ import com.cursor.eclipse.agent.LaunchFactory;
 import com.cursor.eclipse.agent.SessionLaunchRegistry;
 import com.cursor.eclipse.agent.SessionLaunchRegistry.OpenSession;
 import com.cursor.eclipse.chat.ChatView;
+import com.cursor.eclipse.chat.handlers.NewAgentHandler;
 import com.cursor.eclipse.prefs.PreferenceConstants;
 
 /**
@@ -132,6 +136,14 @@ public final class AgentsView extends ViewPart {
 		menu.setRemoveAllWhenShown(true);
 		menu.addMenuListener(manager -> {
 			Object selected = selection();
+			if (selected instanceof FolderNode folder && folder.folder().isDirectory()) {
+				manager.add(action("New Agent in " + folder.folder().getName() + "\u2026",
+						() -> NewAgentHandler.open(getSite().getWorkbenchWindow(), folder.folder())));
+			}
+			if (selected instanceof RepositoryNode repository && repository.repository() != null) {
+				manager.add(action("New Cloud Agent in " + repository.label() + "\u2026",
+						() -> createCloudAgent(repository)));
+			}
 			if (selected instanceof OpenSession || selected instanceof LocalChat) {
 				manager.add(action("Open in Eclipse", () -> open(selected)));
 			}
@@ -147,6 +159,41 @@ public final class AgentsView extends ViewPart {
 			manager.add(action("Refresh", this::refresh));
 		});
 		viewer.getControl().setMenu(menu.createContextMenu(viewer.getControl()));
+	}
+
+	private void createCloudAgent(RepositoryNode repository) {
+		InputDialog dialog = new InputDialog(getSite().getShell(), "New Cloud Agent in " + repository.label(),
+				"Task:", "", value -> value == null || value.isBlank() ? "Enter a task" : null);
+		if (dialog.open() != Window.OK) {
+			return;
+		}
+		String prompt = dialog.getValue().trim();
+		worker("cursor-create-cloud-agent", () -> {
+			try {
+				CloudAgent created = CloudAgents.create(CloudAgents.apiKey(), repository.repository(), prompt);
+				Display display = viewer.getControl().getDisplay();
+				display.asyncExec(() -> {
+					if (viewer == null || viewer.getControl().isDisposed()) {
+						return;
+					}
+					List<CloudAgent> updated = new ArrayList<>();
+					updated.add(created);
+					updated.addAll(cloudAgents);
+					cloudAgents = List.copyOf(updated);
+					viewer.refresh();
+					viewer.expandToLevel(EXPAND_LEVELS);
+					openCloud(created);
+				});
+			} catch (Exception e) {
+				CursorPlugin.log("Could not create Cursor cloud agent", e);
+				Display display = viewer.getControl().getDisplay();
+				display.asyncExec(() -> {
+					if (viewer != null && !viewer.getControl().isDisposed()) {
+						MessageDialog.openError(getSite().getShell(), "Could not create Cloud Agent", describe(e));
+					}
+				});
+			}
+		});
 	}
 
 	private void createViewMenu() {
@@ -205,7 +252,7 @@ public final class AgentsView extends ViewPart {
 		worker("cursor-local-chats", () -> {
 			List<LocalChat> chats = LocalChatHistory.read();
 			Note note = chats.isEmpty()
-					? new Note("No Cursor CLI chats in " + LocalChatHistory.defaultRoot(), NoteAction.NONE)
+					? new Note("No resumable Cursor CLI or ACP chats found", NoteAction.NONE)
 					: null;
 			publish(token, () -> {
 				localChats = chats;
@@ -392,7 +439,7 @@ public final class AgentsView extends ViewPart {
 	private record FolderNode(File folder, List<Object> children) {
 	}
 
-	private record GroupNode(String label, List<Object> children) {
+	private record RepositoryNode(String label, String repository, List<Object> children) {
 	}
 
 	private List<Object> categories() {
@@ -454,15 +501,18 @@ public final class AgentsView extends ViewPart {
 	private static List<Object> byCloudRepository(List<CloudAgent> agents) {
 		Map<String, List<Object>> groups = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 		for (CloudAgent agent : agents) {
-			groups.computeIfAbsent(repositoryLabel(agent.repository()), ignored -> new ArrayList<>()).add(agent);
+			String key = agent.repository() == null ? "" : agent.repository();
+			groups.computeIfAbsent(key, ignored -> new ArrayList<>()).add(agent);
 		}
 		List<Object> result = new ArrayList<>();
-		groups.forEach((label, children) -> {
+		groups.forEach((repository, children) -> {
 			if (!children.isEmpty()) {
 				children.sort((left, right) -> ((CloudAgent) right).created().compareTo(((CloudAgent) left).created()));
-				result.add(new GroupNode(label, children));
+				result.add(new RepositoryNode(repositoryLabel(repository), repository.isBlank() ? null : repository,
+						children));
 			}
 		});
+		result.sort(Comparator.comparing(item -> ((RepositoryNode) item).label(), String.CASE_INSENSITIVE_ORDER));
 		return result;
 	}
 
@@ -473,7 +523,8 @@ public final class AgentsView extends ViewPart {
 		try {
 			String path = URI.create(repository).getPath();
 			if (path != null && !path.isBlank()) {
-				String label = path.replaceFirst("^/+", "").replaceFirst("\\.git$", "");
+				String normalized = path.replaceFirst("/+$", "").replaceFirst("\\.git$", "");
+				String label = normalized.substring(normalized.lastIndexOf('/') + 1);
 				return label.isBlank() ? repository : label;
 			}
 		} catch (IllegalArgumentException ignored) {
@@ -521,8 +572,8 @@ public final class AgentsView extends ViewPart {
 			if (parentElement instanceof FolderNode folder) {
 				return folder.children().toArray();
 			}
-			if (parentElement instanceof GroupNode group) {
-				return group.children().toArray();
+			if (parentElement instanceof RepositoryNode repository) {
+				return repository.children().toArray();
 			}
 			return new Object[0];
 		}
@@ -549,18 +600,18 @@ public final class AgentsView extends ViewPart {
 				String name = folder.folder().getName();
 				return name.isBlank() ? folder.folder().getAbsolutePath() : name;
 			}
-			if (element instanceof GroupNode group) {
-				return group.label() + " (" + group.children().size() + ")";
+			if (element instanceof RepositoryNode repository) {
+				return repository.label() + " (" + repository.children().size() + ")";
 			}
 			if (element instanceof OpenSession session) {
-				return session.name() + "  \u00b7  " + session.status();
+				return indicator(session.status()) + " " + session.name() + "  \u00b7  " + session.status();
 			}
 			if (element instanceof LocalChat chat) {
-				return chat.title() + "  \u00b7  " + age(chat.modified());
+				return "\u2713 " + chat.title() + "  \u00b7  " + age(chat.modified());
 			}
 			if (element instanceof CloudAgent agent) {
 				String status = agent.status() == null ? "" : "  \u00b7  " + readable(agent.status());
-				return agent.name() + status + "  \u00b7  " + age(agent.created());
+				return indicator(agent.status()) + " " + agent.name() + status + "  \u00b7  " + age(agent.created());
 			}
 			if (element instanceof Note note) {
 				return note.text();
@@ -572,6 +623,9 @@ public final class AgentsView extends ViewPart {
 		public String getToolTipText(Object element) {
 			if (element instanceof FolderNode folder) {
 				return folder.folder().getAbsolutePath();
+			}
+			if (element instanceof RepositoryNode repository) {
+				return repository.repository();
 			}
 			if (element instanceof OpenSession session) {
 				String id = session.sessionId() == null ? "not connected" : session.sessionId();
@@ -599,8 +653,8 @@ public final class AgentsView extends ViewPart {
 			for (Object child : category.children()) {
 				if (child instanceof FolderNode folder) {
 					total += folder.children().size();
-				} else if (child instanceof GroupNode group) {
-					total += group.children().size();
+				} else if (child instanceof RepositoryNode repository) {
+					total += repository.children().size();
 				} else if (!(child instanceof Note)) {
 					total++;
 				}
@@ -611,6 +665,21 @@ public final class AgentsView extends ViewPart {
 		private static String readable(String status) {
 			String lower = status.toLowerCase(Locale.ROOT).replace('_', ' ');
 			return lower.isEmpty() ? lower : Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
+		}
+
+		private static String indicator(String status) {
+			String value = status == null ? "" : status.toUpperCase(Locale.ROOT);
+			if (value.contains("RUNNING") || value.contains("CREATING") || value.contains("WORKING")
+					|| value.contains("SENDING") || value.contains("STARTING") || value.contains("STOPPING")) {
+				return "\u25cf";
+			}
+			if (value.contains("ERROR") || value.contains("FAIL")) {
+				return "\u26a0";
+			}
+			if (value.contains("CANCEL") || value.contains("EXPIRED") || value.contains("DISCONNECT")) {
+				return "\u25cb";
+			}
+			return "\u2713";
 		}
 
 		private static String age(Instant instant) {

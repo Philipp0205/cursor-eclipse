@@ -54,11 +54,13 @@ a { color: var(--accent); }
 .thinking-body { padding: 6px 0 2px; }
 
 .tool {
-  display: flex; align-items: baseline; gap: 8px; margin: 4px 0; padding: 6px 10px;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 4px 0; padding: 6px 10px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--tool);
 }
 .tool-title { font-weight: 600; }
-.tool-detail { color: var(--muted); overflow-wrap: anywhere; flex: 1; }
+.tool-detail { color: var(--muted); overflow-wrap: anywhere; flex: 1 0 100%; }
+.tool-detail summary { cursor: pointer; }
+.tool-detail pre { color: var(--fg); max-height: 28em; white-space: pre-wrap; }
 .tool-status { color: var(--muted); font-size: .88em; margin-left: auto; }
 .tool.status-failed { border-color: var(--danger); }
 .tool.status-failed .tool-status { color: var(--danger); }

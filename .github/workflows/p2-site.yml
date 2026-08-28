@@ -118,11 +118,26 @@ jobs:
           # answers 404 in a browser even though Eclipse resolves it fine.
           cp releng/p2-index.html p2/index.html
 
+      # The published version qualifier alone does not say whether a given
+      # commit is live yet, so both pages name the commit they were built from.
+      - name: Stamp the publish time on the pages
+        run: |
+          feature=$(ls p2/features/com.cursor.eclipse.feature_*.jar 2>/dev/null | sort -V | tail -n 1 || true)
+          version=${feature##*/com.cursor.eclipse.feature_}
+          version=${version%.jar}
+          releng/stamp-published.sh \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            "${version:-unknown}" \
+            "$GITHUB_SHA" \
+            "$GITHUB_REPOSITORY" \
+            "$GITHUB_RUN_ID" \
+            index.html p2/index.html
+
       - name: Commit the published update site
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A p2
+          git add -A p2 index.html
           if git diff --cached --quiet; then
             echo "Update site is already up to date."
           else

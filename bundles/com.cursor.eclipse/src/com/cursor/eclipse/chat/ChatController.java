@@ -1,7 +1,11 @@
 package com.cursor.eclipse.chat;
 
 import java.io.File;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,6 +26,7 @@ import com.cursor.eclipse.agent.ToolCall;
 import com.cursor.eclipse.agents.CloudAgents;
 import com.cursor.eclipse.agents.CloudAgents.CloudRun;
 import com.cursor.eclipse.agents.CloudMessage;
+import com.cursor.eclipse.agents.CloudToolCall;
 import com.google.gson.JsonArray;
 
 /**
@@ -44,11 +49,14 @@ final class ChatController implements SessionListener {
 	private final AtomicBoolean flushScheduled = new AtomicBoolean();
 	private final AtomicInteger turn = new AtomicInteger();
 	private final AtomicReference<String> pendingStatus = new AtomicReference<>();
+	private final Map<String, ToolCall> toolCalls = new ConcurrentHashMap<>();
 	private volatile boolean busy;
 	private volatile boolean connecting;
 	private volatile String cloudAgentId;
 	private volatile String cloudApiKey;
 	private volatile String cloudRunId;
+	private volatile String cloudMode = "agent";
+	private final Deque<CloudPrompt> cloudQueue = new ArrayDeque<>();
 
 	ChatController(ChatView view) {
 		this.view = view;
@@ -140,49 +148,75 @@ final class ChatController implements SessionListener {
 		cloudAgentId = agentId;
 		cloudApiKey = apiKey;
 		view.setCloudAgentId(agentId);
-		view.setModes(List.of(), null);
-		view.setModels(List.of(), null);
+		view.setModes(List.of(new SessionMode("agent", "Agent", "Implement changes"),
+				new SessionMode("plan", "Plan", "Explore and produce a plan")), cloudMode);
+		view.setModels(List.of(new SessionModel("cloud", "fixed", "Conversation model",
+				"Cloud Agent follow-ups keep the conversation's model")), "fixed");
 		reloadCloudConversation("Cloud Agent ready");
 	}
 
 	private void sendCloud(String displayText) {
-		if (busy || cloudAgentId == null) {
+		if (cloudAgentId == null) {
 			return;
 		}
+		CloudPrompt prompt = new CloudPrompt("queued-" + System.nanoTime(), displayText, cloudMode);
+		synchronized (cloudQueue) {
+			if (busy) {
+				cloudQueue.addLast(prompt);
+				int queued = cloudQueue.size();
+				view.putBlock(prompt.id(), ConversationHtml.notice(prompt.id(),
+						"Queued (" + queued + "): " + displayText));
+				view.refreshState("Working in Cursor Cloud \u00b7 " + queued + " queued");
+				return;
+			}
+		}
 		busy = true;
+		runCloud(prompt);
+	}
+
+	private void runCloud(CloudPrompt prompt) {
+		view.removeBlock(prompt.id());
 		int current = turn.incrementAndGet();
 		String userId = "user-" + current;
-		view.putBlock(userId, ConversationHtml.message(userId, "user", displayText));
+		view.putBlock(userId, ConversationHtml.message(userId, "user", prompt.text()));
 		view.putBlock(activityId(current), ConversationHtml.activity(activityId(current), "Working in Cursor Cloud"));
 		view.refreshState("Sending to Cursor Cloud");
 		worker("cursor-cloud-followup", () -> {
 			try {
-				cloudRunId = CloudAgents.followUp(cloudApiKey, cloudAgentId, displayText);
+				cloudRunId = CloudAgents.followUp(cloudApiKey, cloudAgentId, prompt.text(), prompt.mode());
 				if (cloudRunId == null) {
 					throw new IllegalStateException("Cursor did not return a cloud run ID");
 				}
-				CloudRun run;
-				do {
-					Thread.sleep(2_000);
-					run = CloudAgents.run(cloudApiKey, cloudAgentId, cloudRunId);
-					view.refreshState(readableCloudStatus(run.status()));
-				} while (!run.terminal());
+				CloudRun run = CloudAgents.streamRun(cloudApiKey, cloudAgentId, cloudRunId,
+						this::renderCloudToolCall);
 				if ("ERROR".equalsIgnoreCase(run.status())) {
 					throw new IllegalStateException(run.result() == null ? "Cloud run failed" : run.result());
 				}
-				reloadCloudConversation("Cloud Agent ready");
+				if (run.result() != null && !run.result().isBlank()) {
+					String id = "assistant-" + current;
+					view.putBlock(id, ConversationHtml.message(id, "assistant", run.result()));
+				}
+				view.removeBlock(activityId(current));
+				advanceCloudQueue();
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 				finishTurn(current, "Interrupted");
+				advanceCloudQueue();
 			} catch (Exception e) {
 				String message = describe(e);
 				CursorPlugin.log(message, e);
 				view.putBlock("error-" + current, ConversationHtml.error("error-" + current, message));
 				finishTurn(current, "Failed");
+				advanceCloudQueue();
 			} finally {
 				cloudRunId = null;
 			}
 		});
+	}
+
+	private void renderCloudToolCall(CloudToolCall call) {
+		onToolCall(new ToolCall(call.id(), call.name(), call.kind(), call.status(), call.detail()));
+		view.refreshState("Working in Cursor Cloud");
 	}
 
 	private void reloadCloudConversation(String readyStatus) {
@@ -196,21 +230,36 @@ final class ChatController implements SessionListener {
 					view.putBlock(id, ConversationHtml.message(id, message.role(), message.text()));
 				}
 				turn.set(messages.size());
-				busy = false;
-				view.refreshState(readyStatus);
+				CloudPrompt next = nextCloudPrompt();
+				if (next == null) {
+					busy = false;
+					view.refreshState(readyStatus);
+				} else {
+					runCloud(next);
+				}
 			} catch (Exception e) {
 				busy = false;
 				reportError(e);
+				advanceCloudQueue();
 			}
 		});
 	}
 
-	private static String readableCloudStatus(String status) {
-		if (status == null || status.isBlank()) {
-			return "Working in Cursor Cloud";
+	private CloudPrompt nextCloudPrompt() {
+		synchronized (cloudQueue) {
+			return cloudQueue.pollFirst();
 		}
-		String lower = status.toLowerCase().replace('_', ' ');
-		return "Cloud run " + lower;
+	}
+
+	private void advanceCloudQueue() {
+		CloudPrompt next = nextCloudPrompt();
+		if (next == null) {
+			busy = false;
+			view.refreshState("Cloud Agent ready");
+		} else {
+			busy = true;
+			runCloud(next);
+		}
 	}
 
 	void newSession(File workingDirectory) {
@@ -289,6 +338,13 @@ final class ChatController implements SessionListener {
 	}
 
 	void setMode(String modeId) {
+		if (isCloud()) {
+			if ("agent".equals(modeId) || "plan".equals(modeId)) {
+				cloudMode = modeId;
+				view.ui(() -> view.selectMode(modeId));
+			}
+			return;
+		}
 		if (!session.isConnected()) {
 			return;
 		}
@@ -302,6 +358,9 @@ final class ChatController implements SessionListener {
 	}
 
 	void setModel(String modelId) {
+		if (isCloud()) {
+			return;
+		}
 		if (!session.isConnected()) {
 			return;
 		}
@@ -382,8 +441,22 @@ final class ChatController implements SessionListener {
 
 	@Override
 	public void onToolCall(ToolCall call) {
+		String key = turn.get() + ":" + call.id();
+		ToolCall merged = toolCalls.compute(key, (ignored, previous) -> mergeToolCall(previous, call));
 		String id = "tool-" + turn.get() + "-" + call.id();
-		view.putBlock(id, ConversationHtml.tool(id, call));
+		view.putBlock(id, ConversationHtml.tool(id, merged));
+	}
+
+	private static ToolCall mergeToolCall(ToolCall previous, ToolCall update) {
+		if (previous == null) {
+			return update;
+		}
+		return new ToolCall(update.id(), value(update.title(), previous.title()), value(update.kind(), previous.kind()),
+				value(update.status(), previous.status()), value(update.detail(), previous.detail()));
+	}
+
+	private static String value(String preferred, String fallback) {
+		return preferred == null || preferred.isBlank() ? fallback : preferred;
 	}
 
 	@Override
@@ -592,5 +665,8 @@ final class ChatController implements SessionListener {
 		Thread thread = new Thread(task, name);
 		thread.setDaemon(true);
 		thread.start();
+	}
+
+	private record CloudPrompt(String id, String text, String mode) {
 	}
 }

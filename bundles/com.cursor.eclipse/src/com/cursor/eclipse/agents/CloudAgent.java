@@ -11,6 +11,8 @@ import java.time.Instant;
  * @param url        the cursor.com page for the agent, or {@code null}
  * @param repository the repository the agent works on, or {@code null}
  * @param created    when the agent was created
+ * @param archived   whether the agent is archived
  */
-public record CloudAgent(String id, String name, String status, String url, String repository, Instant created) {
+public record CloudAgent(String id, String name, String status, String url, String repository, Instant created,
+		boolean archived) {
 }
